@@ -48,7 +48,7 @@ jobs:
 
       - name: Wait for PostgreSQL to be ready
         run: |
-          until PGPASSWORD=test psql -h localhost -U test -d datashare -c '\q'; do
+          until PGPASSWORD=test psql -h localhost -U dstest -d datashare -c '\q'; do
             >&2 echo "Postgres is still unavailable - sleeping"
             sleep 1
           done
