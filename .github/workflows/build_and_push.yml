@@ -3,7 +3,7 @@ name: Build and Push Datashare Image
 on:
   push:
     tags:
-      - '**'
+      - '**v'
 
 jobs:
   build-and-push:
@@ -14,7 +14,7 @@ jobs:
         image: postgres:latest
         env:
           POSTGRES_DB: datashare
-          POSTGRES_USER: test
+          POSTGRES_USER: dstest
           POSTGRES_PASSWORD: test
         ports:
           - 5432:5432
