@@ -10,6 +10,8 @@ import com.github.scribejava.core.model.OAuthRequest;
 import com.github.scribejava.core.model.Response;
 import com.github.scribejava.core.model.Verb;
 import com.github.scribejava.core.oauth.OAuth20Service;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 import net.codestory.http.Context;
 import net.codestory.http.payload.Payload;
 import net.codestory.http.security.SessionIdStore;
@@ -23,6 +25,7 @@ import java.util.concurrent.ExecutionException;
 import static java.util.Optional.ofNullable;
 import static org.icij.datashare.user.User.fromJson;
 
+@Singleton
 public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
     private final DefaultApi20 defaultOauthApi;
     private final Logger logger = LoggerFactory.getLogger(getClass());
@@ -34,6 +37,7 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
     private final String oauthClientSecret;
     private final String oauthDefaultProject;
     private final String oauthClaimIdAttribute;
+    @Inject
     public ALBCognitoOAuth2CookieFilter(PropertiesProvider propertiesProvider, UsersWritable users, SessionIdStore sessionIdStore) {
         super(propertiesProvider, users, sessionIdStore);
         this.oauthAuthorizeUrl = propertiesProvider.get("oauthAuthorizeUrl").orElse("http://localhost");
