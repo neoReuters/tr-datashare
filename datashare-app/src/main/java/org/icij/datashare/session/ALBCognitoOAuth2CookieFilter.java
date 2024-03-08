@@ -101,8 +101,12 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
 
             // Amend root with user ID
             if (root.has(oauthClaimIdAttribute)) {
+                // Put into root the user ID as the 'id' attribute.
                 root.put("id", root.get(oauthClaimIdAttribute).asText());
+
                 // Put into root the user ID as the 'uid' attribute as well.
+                // This is to ensure that the user ID is always available in the user details.
+                // See org.icij.datashare.user.User class for more details.
                 root.put("uid", root.get(oauthClaimIdAttribute).asText());
                 logger.info("Modified user with 'id': {}", root.get(oauthClaimIdAttribute).asText());
             } else {
