@@ -13,7 +13,6 @@ import com.github.scribejava.core.oauth.OAuth20Service;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import net.codestory.http.Context;
-import net.codestory.http.filters.PayloadSupplier;
 import net.codestory.http.payload.Payload;
 import net.codestory.http.security.SessionIdStore;
 import org.icij.datashare.PropertiesProvider;
@@ -63,27 +62,6 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
 
         logger.info("Using ALBCognitoOAuth2CookieFilter with oauthAuthorizeUrl={}, oauthTokenUrl={}, oauthApiUrl={}, oauthCallbackPath={}, oauthClaimIdAttribute={}",
                 oauthAuthorizeUrl, oauthTokenUrl, oauthApiUrl, oauthCallbackPath, oauthClaimIdAttribute);
-    }
-
-    @Override
-    protected Payload otherUri(String uri, Context context, PayloadSupplier nextFilter) throws Exception {
-        logger.info("otherUri: called with uri: {}", uri);
-        logger.info("context.Cookies: {}", context.cookies());
-        if (context.currentUser() != null) {
-            return nextFilter.get();
-        }
-        String sessionId = readSessionIdInCookie(context);
-        if(uri.equals("/") || uri.isEmpty()) {
-            if (sessionId != null) {
-                String login = sessionIdStore.getLogin(sessionId);
-                if (login != null) {
-                    net.codestory.http.security.User user = users.find(login);
-                    context.setCurrentUser(user);
-                }
-            }
-            return nextFilter.get();
-        }
-        return super.otherUri(uri, context, nextFilter);
     }
 
     @Override
