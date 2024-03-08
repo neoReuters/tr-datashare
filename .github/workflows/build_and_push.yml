@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - '*.*.*'
+env:
+  MAVEN_OPTS: "-Xms512m -Xmx512m -Xss10M"
+
 jobs:
   build-frontend:
     runs-on: ubuntu-latest
