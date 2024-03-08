@@ -7,22 +7,30 @@ import net.codestory.rest.FluentRestTest;
 import org.icij.datashare.PropertiesProvider;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 
+import static java.lang.String.valueOf;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-public class AWSALBCognitoOAuth2CookieFilterTest implements FluentRestTest {
+public class ALBCognitoOAuth2CookieFilterTest implements FluentRestTest {
     private static WebServer webServer = new WebServer() {
         @Override
         protected Env createEnv() { return Env.prod();}
     }.startOnRandomPort();;
     private static ALBCognitoOAuth2CookieFilter awsAlbCognitoOAuth2CookieFilter;
-    static PropertiesProvider propertiesProvider = new PropertiesProvider(new HashMap<>() {{
-        put("messageBusAddress", "redis");
+    private static SessionIdStore sessionIdStore;
+    private static UsersWritable users;
+    private static final PropertiesProvider propertiesProvider = new PropertiesProvider(new HashMap<>() {{
+        put("redisAddress", "redis://localhost:6379");
+        put("messageBusAddress", "redis://localhost:6379");
         put("oauthTokenUrl", "http://localhost:" + webServer.port() + "/oauth/token");
         put("oauthAuthorizeUrl", "http://localhost:" + webServer.port() + "/oauth/authorize");
-        put("oauthApiUrl", "http://localhost:" + webServer.port() + "/api/v1/me.json");
+        put("oauthApiUrl", "http://localhost:" + webServer.port() + "/oauth2/userInfo");
         put("oauthSigninPath", "/auth/signin");
         put("oauthClientId", "12345");
         put("oauthClientSecret", "abcdef");
@@ -44,8 +52,8 @@ public class AWSALBCognitoOAuth2CookieFilterTest implements FluentRestTest {
             });
 
             // Setup AWSALBCognitoOAuth2CookieFilter with mock properties
-            UsersWritable users = new UsersInRedis(propertiesProvider);
-            SessionIdStore sessionIdStore = new RedisSessionIdStore(propertiesProvider);
+            sessionIdStore = mock(SessionIdStore.class);
+            users = mock(UsersWritable.class);
             awsAlbCognitoOAuth2CookieFilter = new ALBCognitoOAuth2CookieFilter(propertiesProvider, users, sessionIdStore);
 
             // Integrate AWSALBCognitoOAuth2CookieFilter into the server's route
@@ -55,7 +63,11 @@ public class AWSALBCognitoOAuth2CookieFilterTest implements FluentRestTest {
 
     @Test
     public void testOAuthCallbackMutatesResponseBody() {
-        // TODO: Implement test when the callback method is implemented
+        String code = "simulatedAuthCode";
+        String state = "simulatedState";
+        String callbackUrl = "/auth/callback?code=" + code + "&state=" + state;
+        // Hit the callback URL to simulate the OAuth2 callback process
+        // get(callbackUrl).should().respond(200);
     }
 
     @Override

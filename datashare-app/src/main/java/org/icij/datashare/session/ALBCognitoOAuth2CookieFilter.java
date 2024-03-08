@@ -56,11 +56,14 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
             @Override public String getAccessTokenEndpoint() { return oauthTokenUrl;}
             @Override protected String getAuthorizationBaseUrl() { return oauthAuthorizeUrl;}
         };
+
+        logger.info("Using ALBCognitoOAuth2CookieFilter with oauthAuthorizeUrl={}, oauthTokenUrl={}, oauthApiUrl={}, oauthCallbackPath={}, oauthClaimIdAttribute={}",
+                oauthAuthorizeUrl, oauthTokenUrl, oauthApiUrl, oauthCallbackPath, oauthClaimIdAttribute);
     }
 
     @Override
     protected Payload callback(Context context) throws IOException, ExecutionException, InterruptedException {
-        logger.info("callback called with {}={} {}={}", REQUEST_CODE_KEY, context.get(REQUEST_CODE_KEY), REQUEST_STATE_KEY, context.get(REQUEST_STATE_KEY));
+        logger.info("callback: called with {}={} {}={}", REQUEST_CODE_KEY, context.get(REQUEST_CODE_KEY), REQUEST_STATE_KEY, context.get(REQUEST_STATE_KEY));
         if (context.get(REQUEST_CODE_KEY) == null || context.get(REQUEST_STATE_KEY) == null || !"GET".equals(context.method()) ||
                 sessionIdStore.getLogin(context.get(REQUEST_STATE_KEY)) == null) {
             return Payload.badRequest();
