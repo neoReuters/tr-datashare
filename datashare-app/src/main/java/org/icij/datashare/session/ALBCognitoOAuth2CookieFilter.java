@@ -102,6 +102,8 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
             // Amend root with user ID
             if (root.has(oauthClaimIdAttribute)) {
                 root.put("id", root.get(oauthClaimIdAttribute).asText());
+                // Put into root the user ID as the 'uid' attribute as well.
+                root.put("uid", root.get(oauthClaimIdAttribute).asText());
                 logger.info("Modified user with 'id': {}", root.get(oauthClaimIdAttribute).asText());
             } else {
                 logger.error("The attribute {} does not exist in the response body.", oauthClaimIdAttribute);
