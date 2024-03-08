@@ -11,14 +11,13 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 public class AWSALBCognitoOAuth2CookieFilterTest implements FluentRestTest {
     private static WebServer webServer = new WebServer() {
         @Override
         protected Env createEnv() { return Env.prod();}
     }.startOnRandomPort();;
-    private static AWSALBCognitoOAuth2CookieFilter awsAlbCognitoOAuth2CookieFilter;
+    private static ALBCognitoOAuth2CookieFilter awsAlbCognitoOAuth2CookieFilter;
     static PropertiesProvider propertiesProvider = new PropertiesProvider(new HashMap<>() {{
         put("messageBusAddress", "redis");
         put("oauthTokenUrl", "http://localhost:" + webServer.port() + "/oauth/token");
@@ -47,7 +46,7 @@ public class AWSALBCognitoOAuth2CookieFilterTest implements FluentRestTest {
             // Setup AWSALBCognitoOAuth2CookieFilter with mock properties
             UsersWritable users = new UsersInRedis(propertiesProvider);
             SessionIdStore sessionIdStore = new RedisSessionIdStore(propertiesProvider);
-            awsAlbCognitoOAuth2CookieFilter = new AWSALBCognitoOAuth2CookieFilter(propertiesProvider, users, sessionIdStore);
+            awsAlbCognitoOAuth2CookieFilter = new ALBCognitoOAuth2CookieFilter(propertiesProvider, users, sessionIdStore);
 
             // Integrate AWSALBCognitoOAuth2CookieFilter into the server's route
             routes.filter(awsAlbCognitoOAuth2CookieFilter);

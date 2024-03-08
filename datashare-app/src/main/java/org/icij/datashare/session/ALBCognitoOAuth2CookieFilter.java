@@ -23,7 +23,7 @@ import java.util.concurrent.ExecutionException;
 import static java.util.Optional.ofNullable;
 import static org.icij.datashare.user.User.fromJson;
 
-public class AWSALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
+public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
     private final DefaultApi20 defaultOauthApi;
     private final Logger logger = LoggerFactory.getLogger(getClass());
     private final String oauthApiUrl;
@@ -34,7 +34,7 @@ public class AWSALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
     private final String oauthClientSecret;
     private final String oauthDefaultProject;
     private final String oauthClaimIdAttribute;
-    public AWSALBCognitoOAuth2CookieFilter(PropertiesProvider propertiesProvider, UsersWritable users, SessionIdStore sessionIdStore) {
+    public ALBCognitoOAuth2CookieFilter(PropertiesProvider propertiesProvider, UsersWritable users, SessionIdStore sessionIdStore) {
         super(propertiesProvider, users, sessionIdStore);
         this.oauthAuthorizeUrl = propertiesProvider.get("oauthAuthorizeUrl").orElse("http://localhost");
         this.oauthTokenUrl = propertiesProvider.get("oauthTokenUrl").orElse("http://localhost");
