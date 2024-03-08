@@ -4,11 +4,38 @@ on:
   push:
     tags:
       - '*.*.*'
-
 jobs:
-  build-and-push:
+  build-frontend:
     runs-on: ubuntu-latest
+    outputs:
+      frontend-artifacts-path: ${{ steps.build_artifacts.outputs.distribution-path }}
 
+    steps:
+      - name: Checkout frontend repository
+        uses: actions/checkout@v2
+        with:
+          repository: 'neoreuters/tr-datashare-client'
+          ref: 'master'
+
+      - name: Setup Node
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend for distribution
+        run: npm run build
+
+      - name: Upload frontend distribution
+        uses: actions/upload-artifact@v2
+        with:
+          name: frontend-distribution
+          path: dist
+
+  build-backend:
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:latest
@@ -77,8 +104,17 @@ jobs:
       - name: Update database
         run: mvn -pl datashare-db liquibase:update
 
-      - name: Package
-        run: mvn validate package -Dmaven.test.skip=true
+      - name: Build datashare-app and datashare-nlp-corenlp
+        run: mvn -pl datashare-app,datashare-nlp-corenlp -am install -Dmaven.test.skip=true -Dgpg.skip=true
+
+      - name: Download frontend artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: frontend-distribution
+          path: app
+
+      - name: Package everything
+        run: mvn -pl datashare-dist package
 
       - name: lowercase github.repository
         run: |
