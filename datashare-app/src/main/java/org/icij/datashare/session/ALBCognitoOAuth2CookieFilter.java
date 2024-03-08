@@ -68,6 +68,7 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
     @Override
     protected Payload otherUri(String uri, Context context, PayloadSupplier nextFilter) throws Exception {
         logger.info("otherUri: called with uri: {}", uri);
+        logger.info("context.Cookies: {}", context.cookies());
         if (context.currentUser() != null) {
             return nextFilter.get();
         }
@@ -171,7 +172,7 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
         return super.signout(context);
     }
     @Override protected String cookieName() { return "_ds_session_id";}
-    @Override protected int expiry() { return oauthTtl;}
+    @Override protected int expiry() { return oauthTtl; }
     @Override protected boolean redirectToLogin(String uri) { return false; }
     private UsersWritable writableUsers() { return (UsersWritable) users; }
 }
