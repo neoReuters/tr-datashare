@@ -16,6 +16,7 @@ import net.codestory.http.Context;
 import net.codestory.http.payload.Payload;
 import net.codestory.http.security.SessionIdStore;
 import org.icij.datashare.PropertiesProvider;
+import org.icij.datashare.user.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -81,40 +82,53 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
         final Response oauthApiResponse = service.execute(request);
 
         logger.info("Received response body from user API: {}", oauthApiResponse.getBody());
-        String jsonBody = oauthApiResponse.getBody();
-        ObjectMapper mapper = new ObjectMapper();
-        ObjectNode root = (ObjectNode) mapper.readTree(jsonBody);
+        return processOAuthApiResponse(oauthApiResponse.getBody(), context);
+    }
 
-        // Amend root with user ID in all cases
-        // Assuming oauthClaimIdAttribute points to a valid field in root
-        // Check if the attribute exists to avoid NullPointerException
-        if (root.has(oauthClaimIdAttribute)) {
-            root.put("id", root.get(oauthClaimIdAttribute));
-            logger.info("Modified user with 'id': {}", root.get(oauthClaimIdAttribute));
-            logger.info("Modified user with 'id': {}", root);
-        } else {
-            // Handle the case where the attribute doesn't exist.
-            logger.error("The attribute {} does not exist in the response body.", oauthClaimIdAttribute);
+    /**
+     * Processes the OAuth API response that comes from ALB + Cognito,
+     * amends it with user ID and 'groups_by_applications',
+     * creates a DatashareUser, and updates the user data store.
+     *
+     * @param oauthApiResponseBody The JSON body of the OAuth API response.
+     * @param context The web context.
+     * @return A payload indicating the outcome of the operation.
+     */
+    protected Payload processOAuthApiResponse(String oauthApiResponseBody, Context context) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            ObjectNode root = (ObjectNode) mapper.readTree(oauthApiResponseBody);
+
+            // Amend root with user ID
+            if (root.has(oauthClaimIdAttribute)) {
+                root.put("id", root.get(oauthClaimIdAttribute).asText());
+                logger.info("Modified user with 'id': {}", root.get(oauthClaimIdAttribute).asText());
+            } else {
+                logger.error("The attribute {} does not exist in the response body.", oauthClaimIdAttribute);
+                return Payload.badRequest();
+            }
+
+            // Set 'groups_by_applications'
+            if (!oauthDefaultProject.isEmpty()) {
+                ArrayNode arrayNode = mapper.createArrayNode();
+                arrayNode.add(oauthDefaultProject);
+                ObjectNode objectNode = mapper.createObjectNode();
+                objectNode.set("datashare", arrayNode);
+                root.put("groups_by_applications", objectNode);
+                logger.info("Modified user with 'groups_by_applications': {}", root);
+            }
+
+            // Create DatashareUser and update user data store
+            User user = User.fromJson(mapper.writeValueAsString(root), "icij");
+            DatashareUser datashareUser = new DatashareUser(user.details);
+            writableUsers().saveOrUpdate(datashareUser);
+
+            return Payload.seeOther(validRedirectUrl(readRedirectUrlInCookie(context)))
+                    .withCookie(authCookie(buildCookie(datashareUser, "/")));
+        } catch (Exception e) {
+            logger.error("Error processing OAuth API response: ", e);
             return Payload.badRequest();
         }
-
-        // Common logic to set 'groups_by_applications' if 'oauthDefaultProject' is not empty
-        if (!oauthDefaultProject.isEmpty()) {
-            ArrayNode arrayNode = mapper.createArrayNode();
-            arrayNode.add(oauthDefaultProject);
-            ObjectNode objectNode = mapper.createObjectNode();
-            objectNode.set("datashare", arrayNode);
-            root.put("groups_by_applications", objectNode);
-            logger.info("Modified user with 'groups_by_applications': {}", root);
-        }
-
-        // Creating DatashareUser and performing saveOrUpdate in all cases
-        org.icij.datashare.user.User user = fromJson(mapper.writeValueAsString(root), "icij");
-        DatashareUser datashareUser = new DatashareUser(user.details);
-        writableUsers().saveOrUpdate(datashareUser);
-        return Payload.seeOther(this.validRedirectUrl(this.readRedirectUrlInCookie(context)))
-                .withCookie(this.authCookie(this.buildCookie(datashareUser, "/")));
-
     }
 
     private String getCallbackUrl(Context context) {
