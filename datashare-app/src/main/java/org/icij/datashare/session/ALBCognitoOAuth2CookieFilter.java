@@ -89,7 +89,9 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
         // Assuming oauthClaimIdAttribute points to a valid field in root
         // Check if the attribute exists to avoid NullPointerException
         if (root.has(oauthClaimIdAttribute)) {
-            root.put("id", root.get(oauthClaimIdAttribute).asText());
+            root.put("id", root.get(oauthClaimIdAttribute));
+            logger.info("Modified user with 'id': {}", root.get(oauthClaimIdAttribute));
+            logger.info("Modified user with 'id': {}", root);
         } else {
             // Handle the case where the attribute doesn't exist.
             logger.error("The attribute {} does not exist in the response body.", oauthClaimIdAttribute);
