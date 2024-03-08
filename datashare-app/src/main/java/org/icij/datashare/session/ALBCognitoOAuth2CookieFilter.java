@@ -31,6 +31,7 @@ import static org.icij.datashare.user.User.fromJson;
 public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
     private final DefaultApi20 defaultOauthApi;
     private final Logger logger = LoggerFactory.getLogger(getClass());
+    private final Integer oauthTtl;
     private final String oauthApiUrl;
     private final String oauthAuthorizeUrl;
     private final String oauthCallbackPath;
@@ -42,6 +43,7 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
     @Inject
     public ALBCognitoOAuth2CookieFilter(PropertiesProvider propertiesProvider, UsersWritable users, SessionIdStore sessionIdStore) {
         super(propertiesProvider, users, sessionIdStore);
+        this.oauthTtl = Integer.valueOf(ofNullable(propertiesProvider.getProperties().getProperty("sessionTtlSeconds")).orElse("600"));
         this.oauthAuthorizeUrl = propertiesProvider.get("oauthAuthorizeUrl").orElse("http://localhost");
         this.oauthTokenUrl = propertiesProvider.get("oauthTokenUrl").orElse("http://localhost");
         this.oauthApiUrl = propertiesProvider.get("oauthApiUrl").orElse("http://localhost");
@@ -66,7 +68,6 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
     @Override
     protected Payload otherUri(String uri, Context context, PayloadSupplier nextFilter) throws Exception {
         logger.info("otherUri: called with uri: {}", uri);
-        logger.info("current user is: {}", context.currentUser());
         if (context.currentUser() != null) {
             return nextFilter.get();
         }
@@ -74,14 +75,11 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
         if(uri.equals("/") || uri.isEmpty()) {
             if (sessionId != null) {
                 String login = sessionIdStore.getLogin(sessionId);
-                logger.info("otherUri: login is: {}", login);
                 if (login != null) {
                     net.codestory.http.security.User user = users.find(login);
                     context.setCurrentUser(user);
-                    logger.info("otherUri: setCurrentUser is: {}", user);
                 }
             }
-            logger.warn("otherUri: sessionId might be null: {}", sessionId);
             return nextFilter.get();
         }
         return super.otherUri(uri, context, nextFilter);
@@ -169,6 +167,11 @@ public class ALBCognitoOAuth2CookieFilter extends OAuth2CookieFilter {
         logger.info("oauth callback url = {}", url);
         return url;
     }
-
-    private UsersWritable writableUsers() { return (UsersWritable) users;}
+    @Override protected Payload signout(Context context) {
+        return super.signout(context);
+    }
+    @Override protected String cookieName() { return "_ds_session_id";}
+    @Override protected int expiry() { return oauthTtl;}
+    @Override protected boolean redirectToLogin(String uri) { return false; }
+    private UsersWritable writableUsers() { return (UsersWritable) users; }
 }
