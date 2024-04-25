@@ -225,7 +225,7 @@ public class PluginServiceTest {
         PluginService pluginService = new PluginService(pluginFolder.getRoot().toPath());
         URL pluginUrl = ClassLoader.getSystemResource("my-plugin.tgz");
         pluginService.downloadAndInstall(pluginUrl);
-        Properties properties = PropertiesProvider.fromMap(new HashMap<String, Object>() {{
+        Properties properties = PropertiesProvider.fromMap(new HashMap<>() {{
             put("pluginDelete", "my-plugin");
         }});
 

@@ -5,7 +5,7 @@
 
     <groupId>org.icij.datashare</groupId>
     <artifactId>datashare</artifactId>
-    <version>14.2.0</version>
+    <version>15.1.9</version>
     <packaging>pom</packaging>
 
     <inceptionYear>2016</inceptionYear>
@@ -76,7 +76,7 @@
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
 
-        <datashare-api.version>13.7.1</datashare-api.version>
+        <datashare-api.version>13.8.0</datashare-api.version>
         <datashare-cli.version>13.5.0</datashare-cli.version>
 
         <datashare-mitie.version>${project.version}</datashare-mitie.version>
@@ -98,7 +98,7 @@
         <xerces.version>2.12.2</xerces.version>
         <commons-beanutils.version>1.7.0</commons-beanutils.version>
         <jna.version>4.2.2</jna.version>
-        <bouncycastle.version>1.66</bouncycastle.version>
+        <bouncycastle.version>1.70</bouncycastle.version>
         <httpcomponents.version>4.5.13</httpcomponents.version>
         <joptsimple.version>6.0-alpha-3</joptsimple.version>
         <slf4j.version>2.0.7</slf4j.version>

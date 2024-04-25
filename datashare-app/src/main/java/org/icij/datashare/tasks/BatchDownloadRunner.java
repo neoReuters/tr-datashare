@@ -1,5 +1,6 @@
 package org.icij.datashare.tasks;
 
+import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import net.lingala.zip4j.io.outputstream.ZipOutputStream;
@@ -46,7 +47,7 @@ import static java.lang.String.valueOf;
 import static java.util.stream.Collectors.toList;
 import static org.icij.datashare.cli.DatashareCliOptions.*;
 
-public class BatchDownloadRunner implements Callable<FileResult>, Monitorable, UserTask {
+public class BatchDownloadRunner implements Callable<UriResult>, Monitorable, UserTask {
     private final static Logger logger = LoggerFactory.getLogger(BatchDownloadRunner.class);
     static final int MAX_SCROLL_SIZE = 3500;
     static final int MAX_BATCH_RESULT_SIZE = 10000;
@@ -75,7 +76,7 @@ public class BatchDownloadRunner implements Callable<FileResult>, Monitorable, U
     }
 
     @Override
-    public FileResult call() throws Exception {
+    public UriResult call() throws Exception {
         int throttleMs = parseInt(propertiesProvider.get(BATCH_THROTTLE_OPT).orElse(DEFAULT_BATCH_THROTTLE));
         int maxResultSize = parseInt(propertiesProvider.get(BATCH_DOWNLOAD_MAX_NB_FILES_OPT).orElse(valueOf(MAX_BATCH_RESULT_SIZE)));
         String scrollDuration = propertiesProvider.get(BATCH_DOWNLOAD_SCROLL_DURATION_OPT).orElse(DEFAULT_SCROLL_DURATION);
@@ -92,34 +93,38 @@ public class BatchDownloadRunner implements Callable<FileResult>, Monitorable, U
         Indexer.Searcher searcher = indexer.search(batchDownload.projects.stream().map(Project::getId).collect(toList()),
                 Document.class, batchDownload.query).withoutSource("content").limit(scrollSize);
 
-        List<? extends Entity> docsToProcess = searcher.scroll(scrollDuration).collect(toList());
-        if (docsToProcess.isEmpty()) {
-            logger.warn("no results for batchDownload {}", batchDownload.uuid);
-            return null;
-        }
-        docsToProcessSize = searcher.totalHits();
-        if (docsToProcessSize > maxResultSize) {
-            logger.warn("number of results for batch download > {} for {}/{} (nb zip entries will be limited)",
-                    maxResultSize, batchDownload.uuid, batchDownload.user);
-        }
-
-        try (Zipper zipper = createZipper(batchDownload, propertiesProvider, mailSenderSupplier)) {
-            HashMap<String, Object> taskProperties = new HashMap<>();
-            taskProperties.put("batchDownload", batchDownload);
-            while (!docsToProcess.isEmpty()) {
-                for (int i = 0; i < docsToProcess.size() && numberOfResults.get() < maxResultSize && zippedFilesSize <= maxZipSizeBytes; i++) {
-                    Document document = (Document) docsToProcess.get(i);
-                    int addedBytes = documentVerifier.isRootDocumentSizeAllowed(document) ? zipper.add(document) : 0;
-                    if (addedBytes > 0) {
-                        zippedFilesSize += addedBytes;
-                        numberOfResults.incrementAndGet();
-                        progressCallback.apply(task.id, getProgressRate());
-                    }
-                }
-                docsToProcess = searcher.scroll(scrollDuration).collect(toList());
+        try {
+            List<? extends Entity> docsToProcess = searcher.scroll(scrollDuration).collect(toList());
+            if (docsToProcess.isEmpty()) {
+                logger.warn("no results for batchDownload {}", batchDownload.uuid);
+                return null;
             }
+            docsToProcessSize = searcher.totalHits();
+            if (docsToProcessSize > maxResultSize) {
+                logger.warn("number of results for batch download > {} for {}/{} (nb zip entries will be limited)",
+                        maxResultSize, batchDownload.uuid, batchDownload.user);
+            }
+
+            try (Zipper zipper = createZipper(batchDownload, propertiesProvider, mailSenderSupplier)) {
+                HashMap<String, Object> taskProperties = new HashMap<>();
+                taskProperties.put("batchDownload", batchDownload);
+                while (!docsToProcess.isEmpty()) {
+                    for (int i = 0; i < docsToProcess.size() && numberOfResults.get() < maxResultSize && zippedFilesSize <= maxZipSizeBytes; i++) {
+                        Document document = (Document) docsToProcess.get(i);
+                        int addedBytes = documentVerifier.isRootDocumentSizeAllowed(document) ? zipper.add(document) : 0;
+                        if (addedBytes > 0) {
+                            zippedFilesSize += addedBytes;
+                            numberOfResults.incrementAndGet();
+                            progressCallback.apply(task.id, getProgressRate());
+                        }
+                    }
+                    docsToProcess = searcher.scroll(scrollDuration).collect(toList());
+                }
+            }
+        } catch (ElasticsearchException esEx) {
+            throw ElasticSearchAdapterException.createFrom(esEx);
         }
-        FileResult result = new FileResult(batchDownload.filename.toFile(), Files.size(batchDownload.filename));
+        UriResult result = new UriResult(batchDownload.filename.toUri(), Files.size(batchDownload.filename));
         logger.info("created batch download file {} of {} entries for user {}", result, numberOfResults.get(), batchDownload.user.getId());
         return result;
     }

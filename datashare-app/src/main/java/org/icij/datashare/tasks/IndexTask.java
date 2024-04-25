@@ -7,7 +7,6 @@ import org.icij.datashare.Stage;
 import org.icij.datashare.extract.DocumentCollectionFactory;
 import org.icij.datashare.monitoring.Monitorable;
 import org.icij.datashare.text.indexing.elasticsearch.ElasticsearchSpewer;
-import org.icij.datashare.user.User;
 import org.icij.extract.document.DocumentFactory;
 import org.icij.extract.extractor.DocumentConsumer;
 import org.icij.extract.extractor.Extractor;
@@ -20,12 +19,13 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.Properties;
+import java.util.function.BiFunction;
 
 import static java.lang.Math.max;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.icij.datashare.cli.DatashareCliOptions.*;
+import static org.icij.datashare.cli.DatashareCliOptions.PARALLELISM_OPT;
+import static org.icij.datashare.cli.DatashareCliOptions.REPORT_NAME_OPT;
 
 @OptionsClass(Extractor.class)
 @OptionsClass(DocumentFactory.class)
@@ -36,17 +36,15 @@ public class IndexTask extends PipelineTask<Path> implements Monitorable{
     private final DocumentConsumer consumer;
     private long totalToProcess;
     private final Integer parallelism;
-    private final String indexName;
 
     @Inject
-    public IndexTask(final ElasticsearchSpewer spewer, final DocumentCollectionFactory<Path> factory, @Assisted User user, @Assisted final Properties properties) throws IOException {
-        super(Stage.INDEX, user, factory, new PropertiesProvider(properties), Path.class);
-        PropertiesProvider propertiesProvider = new PropertiesProvider(properties);
+    public IndexTask(final ElasticsearchSpewer spewer, final DocumentCollectionFactory<Path> factory, @Assisted TaskView<Long> taskView, @Assisted final BiFunction<String, Double, Void> updateCallback) throws IOException {
+        super(Stage.INDEX, taskView.user, factory, new PropertiesProvider(taskView.properties), Path.class);
         parallelism = propertiesProvider.get(PARALLELISM_OPT).map(Integer::parseInt).orElse(Runtime.getRuntime().availableProcessors());
-        indexName = propertiesProvider.get(DEFAULT_PROJECT_OPT).orElse(DEFAULT_DEFAULT_PROJECT);
 
-        Options<String> allTaskOptions = options().createFrom(Options.from(properties));
-        ((ElasticsearchSpewer) spewer.configure(allTaskOptions)).createIndexIfNotExists(indexName);
+        Options<String> allTaskOptions = options().createFrom(Options.from(taskView.properties));
+        ((ElasticsearchSpewer) spewer.configure(allTaskOptions)).createIndexIfNotExists();
+
         DocumentFactory documentFactory = new DocumentFactory().configure(allTaskOptions);
         Extractor extractor = new Extractor(documentFactory).configure(allTaskOptions);
 
@@ -60,7 +58,8 @@ public class IndexTask extends PipelineTask<Path> implements Monitorable{
 
     @Override
     public Long call() throws Exception {
-        logger.info("Processing up to {} file(s) in parallel into {}", parallelism, indexName);
+        super.call();
+        logger.info("Processing up to {} file(s) in parallel", parallelism);
         totalToProcess = drainer.drain(PATH_POISON).get();
         drainer.shutdown();
         drainer.awaitTermination(10, SECONDS); // drain is finished
@@ -68,12 +67,8 @@ public class IndexTask extends PipelineTask<Path> implements Monitorable{
 
         consumer.shutdown();
         // documents could be currently processed
-        try {
-            while (!consumer.awaitTermination(30, MINUTES)) {
-                logger.info("Consumer has not terminated yet.");
-            }
-        } catch (InterruptedException iex) {
-            logger.info("Got InterruptedException while waiting for the consumer shutdown.");
+        while (!consumer.awaitTermination(30, MINUTES)) {
+            logger.info("Consumer has not terminated yet.");
         }
 
         if (consumer.getReporter() != null) consumer.getReporter().close();

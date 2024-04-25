@@ -2,26 +2,33 @@ package org.icij.datashare;
 
 import com.google.inject.ConfigurationException;
 import org.icij.datashare.cli.CliExtensionService;
-import org.icij.datashare.cli.DatashareCliOptions;
 import org.icij.datashare.cli.spi.CliExtension;
 import org.icij.datashare.mode.CommonMode;
+import org.icij.datashare.tasks.DeduplicateTask;
+import org.icij.datashare.tasks.EnqueueFromIndexTask;
+import org.icij.datashare.tasks.ExtractNlpTask;
+import org.icij.datashare.tasks.IndexTask;
+import org.icij.datashare.tasks.ScanIndexTask;
+import org.icij.datashare.tasks.ScanTask;
 import org.icij.datashare.tasks.TaskFactory;
 import org.icij.datashare.tasks.TaskManagerMemory;
 import org.icij.datashare.tasks.TaskView;
 import org.icij.datashare.text.indexing.Indexer;
-import org.icij.extract.queue.DocumentQueue;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.Properties;
 
 import static java.util.Optional.ofNullable;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.icij.datashare.cli.DatashareCliOptions.*;
+import static org.icij.datashare.PropertiesProvider.propertiesToMap;
+import static org.icij.datashare.cli.DatashareCliOptions.CREATE_INDEX_OPT;
+import static org.icij.datashare.cli.DatashareCliOptions.CRE_API_KEY_OPT;
+import static org.icij.datashare.cli.DatashareCliOptions.DEL_API_KEY_OPT;
+import static org.icij.datashare.cli.DatashareCliOptions.GET_API_KEY_OPT;
 import static org.icij.datashare.user.User.localUser;
 import static org.icij.datashare.user.User.nullUser;
 
@@ -101,32 +108,41 @@ class CliApp {
 
         PipelineHelper pipeline = new PipelineHelper(new PropertiesProvider(properties));
         if (pipeline.has(Stage.DEDUPLICATE)) {
-            taskManager.startTask(taskFactory.createDeduplicateTask(nullUser()));
+            Long result = taskFactory.createDeduplicateTask(
+                    new TaskView<>(DeduplicateTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (s, percentage) -> {logger.info("percentage: {}% done", percentage);return null;}).call();
+            logger.info("removed {} duplicates", result);
         }
 
         if (pipeline.has(Stage.SCANIDX)) {
-            TaskView<Long> taskView = taskManager.startTask(taskFactory.createScanIndexTask(nullUser(), properties));
-            logger.info("scanned {}", taskView.getResult(true));
+            Long result = taskFactory.createScanIndexTask(
+                    new TaskView<>(ScanIndexTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (s, percentage) -> {logger.info("percentage: {}% done", percentage);return null;}).call();
+            logger.info("scanned {}", result);
         }
 
         if (pipeline.has(Stage.SCAN)) {
-            taskManager.startTask(taskFactory.createScanTask(nullUser(), Paths.get(properties.getProperty(DatashareCliOptions.DATA_DIR_OPT)), properties),
-                    () -> closeAndLogException(mode.get(DocumentQueue.class)).run());
+            taskFactory.createScanTask(
+                    new TaskView<>(ScanTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (s, percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
         }
 
         if (pipeline.has(Stage.INDEX)) {
-            taskManager.startTask(taskFactory.createIndexTask(nullUser(), properties),
-                    () -> closeAndLogException(mode.get(DocumentQueue.class)).run());
+            taskFactory.createIndexTask(
+                    new TaskView<>(IndexTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (s, percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
         }
 
         if (pipeline.has(Stage.ENQUEUEIDX)) {
-            taskManager.startTask(taskFactory.createEnqueueFromIndexTask(nullUser(), properties),
-                    () -> closeAndLogException(mode.get(DocumentQueue.class)).run());
+            taskFactory.createEnqueueFromIndexTask(
+                    new TaskView<>(EnqueueFromIndexTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (s, percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
         }
 
         if (pipeline.has(Stage.NLP)) {
-            taskManager.startTask(taskFactory.createNlpTask(nullUser(), properties),
-                    () -> closeAndLogException(mode.get(DocumentQueue.class)).run());
+            taskFactory.createExtractNlpTask(
+                    new TaskView<>(ExtractNlpTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (s, percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
         }
         taskManager.shutdownAndAwaitTermination(Integer.MAX_VALUE, SECONDS);
         indexer.close();
@@ -134,15 +150,5 @@ class CliApp {
             logger.info("shutting down RedissonClient");
             r.shutdown();
         });
-    }
-
-    private static Runnable closeAndLogException(AutoCloseable closeable) {
-        return () -> {
-            try {
-                closeable.close();
-            } catch (Exception e) {
-                logger.error("error while closing", e);
-            }
-        };
     }
 }

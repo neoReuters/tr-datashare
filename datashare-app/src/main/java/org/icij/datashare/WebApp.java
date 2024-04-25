@@ -1,12 +1,16 @@
 package org.icij.datashare;
 
 import net.codestory.http.WebServer;
+import org.icij.datashare.batch.BatchSearch;
+import org.icij.datashare.batch.BatchSearchRepository;
 import org.icij.datashare.cli.DatashareCli;
 import org.icij.datashare.cli.Mode;
 import org.icij.datashare.cli.QueueType;
 import org.icij.datashare.com.bus.amqp.QpidAmqpServer;
 import org.icij.datashare.mode.CommonMode;
+import org.icij.datashare.tasks.BatchSearchRunner;
 import org.icij.datashare.tasks.TaskFactory;
+import org.icij.datashare.tasks.TaskManager;
 
 import java.awt.*;
 import java.io.IOException;
@@ -18,6 +22,7 @@ import java.util.concurrent.Executors;
 
 import static java.lang.Boolean.parseBoolean;
 import static java.lang.Integer.parseInt;
+import static org.icij.datashare.cli.DatashareCliOptions.BATCH_QUEUE_TYPE_OPT;
 import static org.icij.datashare.cli.DatashareCliOptions.BROWSER_OPEN_LINK_OPT;
 
 public class WebApp {
@@ -47,11 +52,7 @@ public class WebApp {
             waitForServerToBeUp(parseInt(mode.properties().getProperty(PropertiesProvider.TCP_LISTEN_PORT)));
             Desktop.getDesktop().browse(URI.create(new URI("http://localhost:")+mode.properties().getProperty(PropertiesProvider.TCP_LISTEN_PORT)));
         }
-        if (mode.getMode() == Mode.LOCAL || mode.getMode() == Mode.EMBEDDED) {
-            ExecutorService executor = Executors.newFixedThreadPool(2);
-            executor.submit(mode.get(TaskFactory.class).createBatchDownloadLoop());
-            executor.submit(mode.get(TaskFactory.class).createBatchSearchLoop());
-        }
+        requeueDatabaseBatchSearches(mode.get(BatchSearchRepository.class), mode.get(TaskManager.class));
         webServerThread.join();
     }
 
@@ -66,6 +67,13 @@ public class WebApp {
            } else {
                Thread.sleep(500);
            }
+        }
+    }
+
+    private static void requeueDatabaseBatchSearches(BatchSearchRepository repository, TaskManager taskManager) throws IOException {
+        for (String batchSearchUuid: repository.getQueued()) {
+            BatchSearch batchSearch = repository.get(batchSearchUuid);
+            taskManager.startTask(batchSearchUuid, BatchSearchRunner.class.getName(), batchSearch.user);
         }
     }
 

@@ -5,24 +5,30 @@ import com.google.inject.Singleton;
 import org.icij.datashare.com.bus.amqp.AmqpConsumer;
 import org.icij.datashare.com.bus.amqp.AmqpInterlocutor;
 import org.icij.datashare.com.bus.amqp.AmqpQueue;
-import org.icij.datashare.com.bus.amqp.EventSaver;
+import org.icij.datashare.com.bus.amqp.CanceledEvent;
 import org.icij.datashare.com.bus.amqp.ProgressEvent;
 import org.icij.datashare.com.bus.amqp.ResultEvent;
+import org.icij.datashare.com.bus.amqp.TaskEvent;
 import org.icij.datashare.com.bus.amqp.TaskViewEvent;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import static java.util.Optional.ofNullable;
 
 @Singleton
 public class TaskSupplierAmqp implements TaskSupplier {
     private final BlockingQueue<TaskViewEvent> taskViewEvents = new ArrayBlockingQueue<>(1024);
-    final AmqpConsumer<TaskViewEvent, EventSaver<TaskViewEvent>> consumer;
+    final AmqpConsumer<TaskViewEvent, Consumer<TaskViewEvent>> consumer;
+    final AmqpConsumer<TaskEvent, Consumer<TaskEvent>> eventConsumer;
+    final List<Consumer<TaskEvent>> eventCallbackList = new LinkedList<>();
     private final AmqpInterlocutor amqp;
 
     @Inject
@@ -32,8 +38,8 @@ public class TaskSupplierAmqp implements TaskSupplier {
             if (!taskViewEvents.offer(event)) {
                 throw new SupplierBufferingException();
             }
-        }, AmqpQueue.TASK, TaskViewEvent.class);
-        consumer.consumeEvents();
+        }, AmqpQueue.TASK, TaskViewEvent.class).consumeEvents();
+        eventConsumer = new AmqpConsumer<>(amqp, this::handleEvent, AmqpQueue.EVENT, TaskEvent.class).consumeEvents();
     }
 
     @Override
@@ -61,8 +67,26 @@ public class TaskSupplierAmqp implements TaskSupplier {
     }
 
     @Override
+    public void canceled(TaskView<?> task, boolean requeue) {
+        try {
+            amqp.publish(AmqpQueue.EVENT, new CanceledEvent(task.id, requeue));
+        } catch (IOException e) {
+            LoggerFactory.getLogger(getClass()).warn("cannot publish cancelled for task {}", task.id);
+        }
+    }
+
+    @Override
     public void error(String taskId, Throwable throwable) {
         result(taskId, throwable);
+    }
+
+    private void handleEvent(TaskEvent taskEvent) {
+        eventCallbackList.forEach(c -> c.accept(taskEvent));
+    }
+
+    @Override
+    public void addEventListener(Consumer<TaskEvent> callback) {
+        eventCallbackList.add(callback);
     }
 
     @Override

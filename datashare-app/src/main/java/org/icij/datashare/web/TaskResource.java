@@ -23,12 +23,7 @@ import org.icij.datashare.PropertiesProvider;
 import org.icij.datashare.batch.BatchDownload;
 import org.icij.datashare.extract.OptionsWrapper;
 import org.icij.datashare.json.JsonObjectMapper;
-import org.icij.datashare.tasks.BatchDownloadRunner;
-import org.icij.datashare.tasks.FileResult;
-import org.icij.datashare.tasks.IndexTask;
-import org.icij.datashare.tasks.TaskFactory;
-import org.icij.datashare.tasks.TaskManager;
-import org.icij.datashare.tasks.TaskView;
+import org.icij.datashare.tasks.*;
 import org.icij.datashare.text.Project;
 import org.icij.datashare.user.User;
 
@@ -38,7 +33,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -47,13 +41,21 @@ import java.util.regex.Pattern;
 import static java.lang.Boolean.parseBoolean;
 import static java.nio.file.Paths.get;
 import static java.util.Arrays.asList;
+import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 import static net.codestory.http.errors.NotFoundException.notFoundIfNull;
 import static net.codestory.http.payload.Payload.forbidden;
 import static net.codestory.http.payload.Payload.ok;
 import static org.apache.commons.lang3.SystemUtils.IS_OS_WINDOWS;
-import static org.icij.datashare.PropertiesProvider.*;
+import static org.icij.datashare.PropertiesProvider.DEFAULT_PROJECT_OPTION;
+import static org.icij.datashare.PropertiesProvider.DIGEST_PROJECT_NAME_OPTION;
+import static org.icij.datashare.PropertiesProvider.MAP_NAME_OPTION;
+import static org.icij.datashare.PropertiesProvider.QUEUE_NAME_OPTION;
+import static org.icij.datashare.PropertiesProvider.RESUME_OPTION;
+import static org.icij.datashare.PropertiesProvider.SYNC_MODELS_OPTION;
+import static org.icij.datashare.PropertiesProvider.propertiesToMap;
 import static org.icij.datashare.cli.DatashareCliOptions.BATCH_DOWNLOAD_DIR_OPT;
+import static org.icij.datashare.cli.DatashareCliOptions.DATA_DIR_OPT;
 import static org.icij.datashare.cli.DatashareCliOptions.NLP_PIPELINE_OPT;
 import static org.icij.datashare.text.nlp.AbstractModels.syncModels;
 
@@ -96,9 +98,9 @@ public class TaskResource {
     public Payload getTaskResult(@Parameter(name = "id", description = "task id", in = ParameterIn.PATH) String id, Context context) throws IOException {
         TaskView<?> task = forbiddenIfNotSameUser(context, notFoundIfNull(taskManager.getTask(id)));
         Object result = task.getResult();
-        if (result instanceof FileResult) {
-            FileResult fileResult = (FileResult) result;
-            Path filePath = Path.of(fileResult.file.getPath());
+        if (result instanceof UriResult) {
+            UriResult uriResult = (UriResult) result;
+            Path filePath = Path.of(uriResult.uri.getPath());
             String fileName = filePath.getFileName().toString();
             String contentDisposition = "attachment;filename=\"" + fileName + "\"";
             InputStream fileInputStream = Files.newInputStream(filePath);
@@ -140,10 +142,9 @@ public class TaskResource {
             requestBody = @RequestBody(description = "wrapper for options json", required = true,  content = @Content(schema = @Schema(implementation = OptionsWrapper.class))))
     @ApiResponse(responseCode = "200", description = "returns 200 and the json task", useReturnTypeSchema = true)
     @Post("/batchUpdate/index")
-    public TaskView<Long> indexQueue(final OptionsWrapper<String> optionsWrapper, Context context) {
+    public TaskView<Long> indexQueue(final OptionsWrapper<String> optionsWrapper, Context context) throws IOException {
         Properties properties = applyProjectProperties(optionsWrapper);
-        IndexTask indexTask = taskFactory.createIndexTask((User) context.currentUser(), properties);
-        return taskManager.startTask(indexTask);
+        return taskManager.startTask(IndexTask.class.getName(), (User) context.currentUser(), propertiesToMap(properties));
     }
 
     @Operation(description = "Indexes files in a directory (with docker, it is the mounted directory that is scanned).",
@@ -163,22 +164,27 @@ public class TaskResource {
         Properties properties = applyProjectProperties(optionsWrapper);
         User user = (User) context.currentUser();
         // Use a report map only if the request's body contains a "filter" attribute
-        if (properties.get("filter") != null && parseBoolean(properties.getProperty("filter"))) {
-            taskFactory.createScanIndexTask(user, properties).call();
+        if (properties.get("filter") != null && Boolean.parseBoolean(properties.getProperty("filter"))) {
+            // TODO remove taskFactory.createScanIndexTask would allow to get rid of taskfactory dependency in taskresource
+            // problem for now is that if we call taskManager.startTask(ScanIndexTask.class.getName(), user, propertiesToMap(properties))
+            // the task will be run as a background task that will have race conditions with indexTask report loading
+            taskFactory.createScanIndexTask(new TaskView<>(ScanIndexTask.class.getName(), user, propertiesToMap(properties)), (s, p) -> null).call();
         } else {
             properties.remove(MAP_NAME_OPTION); // avoid use of reportMap to override ES docs
         }
-        return asList(scanResponse, taskManager.startTask(taskFactory.createIndexTask(user, properties)));
+        return asList(scanResponse, taskManager.startTask(IndexTask.class.getName(), user, propertiesToMap(properties)));
     }
 
     @Operation(description = "Scans recursively a directory with the given path.",
             requestBody = @RequestBody(description = "wrapper for options json", required = true,  content = @Content(schema = @Schema(implementation = OptionsWrapper.class))))
     @ApiResponse(responseCode = "200", description = "returns 200 and the created task", useReturnTypeSchema = true)
     @Post("/batchUpdate/scan/:filePath:")
-    public TaskView<Long> scanFile(@Parameter(name = "filePath", description = "path of the directory", in = ParameterIn.PATH) final String filePath, final OptionsWrapper<String> optionsWrapper, Context context) {
+    public TaskView<Long> scanFile(@Parameter(name = "filePath", description = "path of the directory", in = ParameterIn.PATH) final String filePath, final OptionsWrapper<String> optionsWrapper, Context context) throws IOException {
         Path path = IS_OS_WINDOWS ?  get(filePath) : get(File.separator, filePath);
         Properties properties = applyProjectProperties(optionsWrapper);
-        return taskManager.startTask(taskFactory.createScanTask((User) context.currentUser(), path, properties));
+        properties.setProperty(DATA_DIR_OPT, path.toString());
+        return taskManager.startTask(ScanTask.class.getName(), (User) context.currentUser(), propertiesToMap(properties));
+
     }
 
     @Operation(description = "Cleans all DONE tasks.")
@@ -248,16 +254,16 @@ public class TaskResource {
             requestBody = @RequestBody(description = "wrapper for options json", required = true,  content = @Content(schema = @Schema(implementation = OptionsWrapper.class))))
     @ApiResponse(responseCode = "200", description = "returns 200 and the created task", useReturnTypeSchema = true)
     @Post("/findNames/:pipeline")
-    public List<TaskView<?>> extractNlp(@Parameter(name = "pipeline", description = "name of the NLP pipeline to use", in = ParameterIn.PATH) final String pipelineName, final OptionsWrapper<String> optionsWrapper, Context context) {
+    public List<TaskView<?>> extractNlp(@Parameter(name = "pipeline", description = "name of the NLP pipeline to use", in = ParameterIn.PATH) final String pipelineName, final OptionsWrapper<String> optionsWrapper, Context context) throws IOException {
         Properties properties = applyProjectProperties(optionsWrapper);
         properties.put(NLP_PIPELINE_OPT, pipelineName);
         syncModels(parseBoolean(properties.getProperty(SYNC_MODELS_OPTION, "true")));
-        List<TaskView<?>> tasks = new LinkedList<>();
+        TaskView<Long> nlpTask = taskManager.startTask(ExtractNlpTask.class.getName(), (User) context.currentUser(), propertiesToMap(properties));
         if (parseBoolean(properties.getProperty(RESUME_OPTION, "true"))) {
-            tasks.add(taskManager.startTask(taskFactory.createEnqueueFromIndexTask((User) context.currentUser(), properties)));
+            TaskView<Long> resumeNlpTask = taskManager.startTask(EnqueueFromIndexTask.class.getName(), ((User) context.currentUser()), propertiesToMap(properties));
+            return asList(resumeNlpTask, nlpTask);
         }
-        tasks.add(taskManager.startTask(taskFactory.createNlpTask((User) context.currentUser(), properties)));
-        return tasks;
+        return singletonList(nlpTask);
     }
 
     public Properties applyProjectProperties(OptionsWrapper optionsWrapper) {

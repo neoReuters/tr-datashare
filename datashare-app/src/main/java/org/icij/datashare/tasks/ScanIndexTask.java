@@ -5,13 +5,13 @@ import com.google.inject.assistedinject.Assisted;
 import org.icij.datashare.Entity;
 import org.icij.datashare.PropertiesProvider;
 import org.icij.datashare.Stage;
+import org.icij.datashare.extract.DocumentCollectionFactory;
 import org.icij.datashare.text.Document;
 import org.icij.datashare.text.indexing.Indexer;
-import org.icij.datashare.user.User;
-import org.icij.datashare.user.UserTask;
 import org.icij.extract.extractor.ExtractionStatus;
 import org.icij.extract.report.Report;
 import org.icij.extract.report.ReportMap;
+import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,45 +20,52 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.Properties;
+import java.util.function.BiFunction;
 import java.util.stream.IntStream;
-import org.icij.datashare.extract.DocumentCollectionFactory;
 
 import static java.lang.Integer.parseInt;
 import static java.lang.String.valueOf;
 import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toMap;
-import static org.icij.datashare.cli.DatashareCliOptions.*;
+import static org.icij.datashare.cli.DatashareCliOptions.DEFAULT_DEFAULT_PROJECT;
+import static org.icij.datashare.cli.DatashareCliOptions.DEFAULT_PROJECT_OPT;
+import static org.icij.datashare.cli.DatashareCliOptions.DEFAULT_SCROLL_DURATION;
+import static org.icij.datashare.cli.DatashareCliOptions.DEFAULT_SCROLL_SIZE;
+import static org.icij.datashare.cli.DatashareCliOptions.DEFAULT_SCROLL_SLICES;
+import static org.icij.datashare.cli.DatashareCliOptions.REPORT_NAME_OPT;
+import static org.icij.datashare.cli.DatashareCliOptions.SCROLL_DURATION_OPT;
+import static org.icij.datashare.cli.DatashareCliOptions.SCROLL_SIZE_OPT;
+import static org.icij.datashare.cli.DatashareCliOptions.SCROLL_SLICES_OPT;
 import static org.icij.datashare.text.indexing.ScrollQueryBuilder.createScrollQuery;
 
-public class ScanIndexTask extends PipelineTask<Path> implements UserTask {
+public class ScanIndexTask extends PipelineTask<Path> {
     private final Logger logger = LoggerFactory.getLogger(getClass());
     private final Indexer indexer;
     private final String projectName;
     private final ReportMap reportMap;
-    private final User user;
     private final String scrollDuration;
     private final int scrollSize;
     private final int scrollSlices;
 
     @Inject
-    public ScanIndexTask(DocumentCollectionFactory<Path> factory, final Indexer indexer, @Assisted User user, @Assisted Properties properties) {
-        super(Stage.SCANIDX, user, factory, new PropertiesProvider(properties), Path.class);
-        this.user = user;
+    public ScanIndexTask(DocumentCollectionFactory<Path> factory, final Indexer indexer,
+                         @Assisted TaskView<Long> taskView, @Assisted BiFunction<String, Double, Void> updateCallback) {
+        super(Stage.SCANIDX, taskView.user, factory, new PropertiesProvider(taskView.properties), Path.class);
         this.scrollDuration = propertiesProvider.get(SCROLL_DURATION_OPT).orElse(DEFAULT_SCROLL_DURATION);
         this.scrollSize = parseInt(propertiesProvider.get(SCROLL_SIZE_OPT).orElse(valueOf(DEFAULT_SCROLL_SIZE)));
         this.scrollSlices = parseInt(propertiesProvider.get(SCROLL_SLICES_OPT).orElse(valueOf(DEFAULT_SCROLL_SLICES)));
         this.projectName = propertiesProvider.get(DEFAULT_PROJECT_OPT).orElse(DEFAULT_DEFAULT_PROJECT);
-        this.reportMap = factory.createMap(propertiesProvider.get(REPORT_NAME_OPT).orElse("extract:report"));
+        this.reportMap = factory.createMap(getMapName());
         this.indexer = indexer;
     }
 
     @Override
     public Long call() throws Exception {
-        logger.info("scanning index {} with {} scroll, scroll size {} and {} slices", projectName, scrollDuration, scrollSize, scrollSlices);
+        super.call();
+        logger.info("scanning index {} with {} scroll, scroll size {} and {} slice(s)", projectName, scrollDuration, scrollSize, scrollSlices);
         Optional<Long> nb = IntStream.range(0, scrollSlices).parallel().mapToObj(this::slicedScroll).reduce(Long::sum);
-        logger.info("imported {} paths into {}", nb.get(), reportMap);
+        logger.info("imported {} paths into map {}", nb.get(), getMapName());
         return nb.get();
     }
 
@@ -78,8 +85,8 @@ public class ScanIndexTask extends PipelineTask<Path> implements UserTask {
         return nbProcessed;
     }
 
-    @Override
-    public User getUser() {
-        return user;
+    @NotNull
+    private String getMapName() {
+        return propertiesProvider.get(REPORT_NAME_OPT).orElse("extract:report");
     }
 }

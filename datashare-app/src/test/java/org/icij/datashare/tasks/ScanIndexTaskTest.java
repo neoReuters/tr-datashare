@@ -21,6 +21,7 @@ import java.util.HashMap;
 
 import static org.fest.assertions.Assertions.assertThat;
 import static org.fest.assertions.MapAssert.entry;
+import static org.icij.datashare.PropertiesProvider.propertiesToMap;
 import static org.icij.datashare.test.ElasticsearchRule.TEST_INDEX;
 
 public class ScanIndexTaskTest {
@@ -36,7 +37,8 @@ public class ScanIndexTaskTest {
 
     @Test
     public void test_empty_index() throws Exception {
-        assertThat(new ScanIndexTask(documentCollectionFactory, indexer, User.nullUser(), propertiesProvider.getProperties()).call()).isEqualTo(0);
+        assertThat(new ScanIndexTask(documentCollectionFactory, indexer, new TaskView<>(
+                ScanIndexTask.class.getName(), User.nullUser(), propertiesToMap(propertiesProvider.getProperties())), null).call()).isEqualTo(0);
     }
 
     @Test
@@ -44,7 +46,8 @@ public class ScanIndexTaskTest {
         indexer.add(TEST_INDEX, DocumentBuilder.createDoc("id1").build());
         indexer.add(TEST_INDEX, DocumentBuilder.createDoc("id2").build());
 
-        assertThat(new ScanIndexTask(documentCollectionFactory, indexer, User.nullUser(), propertiesProvider.getProperties()).call()).isEqualTo(2);
+        assertThat(new ScanIndexTask(documentCollectionFactory, indexer,  new TaskView<>(
+                ScanIndexTask.class.getName(), User.nullUser(), propertiesToMap(propertiesProvider.getProperties())), null).call()).isEqualTo(2);
 
         ReportMap actualReportMap = documentCollectionFactory.createMap("test:report");
         assertThat(actualReportMap).includes(

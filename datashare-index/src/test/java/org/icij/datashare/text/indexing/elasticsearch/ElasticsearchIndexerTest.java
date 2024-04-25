@@ -2,6 +2,7 @@ package org.icij.datashare.text.indexing.elasticsearch;
 
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch._types.Refresh;
+import jakarta.json.JsonException;
 import org.apache.http.ConnectionClosedException;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.script.Script;
@@ -439,6 +440,19 @@ public class ElasticsearchIndexerTest {
         searcher.clearScroll();
     }
 
+    @Test(expected = JsonException.class)
+    public void test_scroll_with_json_query_template_and_wrong_query() throws IOException {
+        Document doc = createDoc("id").build();
+        indexer.add(TEST_INDEX, doc);
+
+        Indexer.Searcher searcher = indexer.search(singletonList(TEST_INDEX), Document.class,
+                        new SearchQuery("{\"bool\":{\"must\":[{\"query_string\":{\"query\":\"<query>\"}}, {\"match\":{\"type\":\"Document\"}}]}}"));
+
+        searcher.scroll(KEEP_ALIVE, "\"id*");
+
+        searcher.clearScroll();
+    }
+
     @Test(expected = IllegalStateException.class)
     public void test_searcher_scroll_is_not_usable_after_clear() throws IOException {
         Indexer.Searcher searcher = indexer.search(singletonList(TEST_INDEX), Document.class).limit(5);
@@ -641,6 +655,29 @@ public class ElasticsearchIndexerTest {
         assertThat(actual.count).isEqualTo(4);
         assertArrayEquals(actual.offsets, new int[]{5,13,22,30});
     }
+    @Test
+    public void test_search_occurrences_of_query_with_diacritics() throws Exception {
+        Document doc = createDoc("id").with("contigüe et accentué s'est tueTuE").withContentLength(38L).build();
+        indexer.add(TEST_INDEX, doc);
+
+        SearchedText actual = indexer.searchTextOccurrences(TEST_INDEX, "id", "tué",null);
+        assertThat(actual.query).isEqualTo("tué");
+        assertThat(actual.count).isEqualTo(3);
+        assertArrayEquals(new int[]{17,27,30},actual.offsets);
+    }
+
+    @Test
+    public void test_search_occurrences_of_query_with_diacritics_long() throws Exception {
+        String text= "L’en-½tête UDP n’a pas de notion\nMethod...tete de numérotation tête";
+        Document doc = createDoc("id").with(text).withContentLength(86L).build();
+        indexer.add(TEST_INDEX, doc);
+
+        SearchedText actual = indexer.searchTextOccurrences(TEST_INDEX, "id", "tête",null);
+        assertThat(actual.query).isEqualTo("tête");
+        assertThat(actual.count).isEqualTo(3);
+        assertArrayEquals(new int[]{6, 42, 63},actual.offsets);
+    }
+
     @Test
     public void test_search_occurrences_of_query_in_content_of_existing_document_ignoring_case() throws Exception {
         Document doc = createDoc("id").with("this content contains content containing john doe").withContentLength(49L).build();

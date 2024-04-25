@@ -2,9 +2,7 @@ package org.icij.datashare.tasks;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import org.apache.commons.lang3.NotImplementedException;
-import org.icij.datashare.PropertiesProvider;
-import org.icij.datashare.batch.BatchDownload;
+import org.icij.datashare.com.bus.amqp.TaskEvent;
 import org.icij.datashare.user.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,62 +11,40 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
-import static java.lang.Integer.parseInt;
-import static java.util.concurrent.Executors.newFixedThreadPool;
+import static java.util.concurrent.Executors.newSingleThreadExecutor;
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toMap;
-import static org.icij.datashare.cli.DatashareCliOptions.PARALLELISM_OPT;
+import static org.icij.datashare.tasks.TaskView.State.RUNNING;
+
 
 @Singleton
 public class TaskManagerMemory implements TaskManager, TaskSupplier {
     private final Logger logger = LoggerFactory.getLogger(getClass());
-    private final ExecutorService executor;
+    private final ExecutorService executor = newSingleThreadExecutor();
     private final ConcurrentMap<String, TaskView<?>> tasks = new ConcurrentHashMap<>();
     private final BlockingQueue<TaskView<?>> taskQueue;
+    private final TaskRunnerLoop loop;
+    private final AtomicInteger executedTasks = new AtomicInteger(0);
 
     @Inject
-    public TaskManagerMemory(final PropertiesProvider provider, BlockingQueue<TaskView<?>> taskQueue) {
+    public TaskManagerMemory(BlockingQueue<TaskView<?>> taskQueue, TaskFactory taskFactory) {
+        this(taskQueue, taskFactory, new CountDownLatch(1));
+    }
+
+    TaskManagerMemory(BlockingQueue<TaskView<?>> taskQueue, TaskFactory taskFactory, CountDownLatch latch) {
         this.taskQueue = taskQueue;
-        Optional<String> parallelism = provider.get(PARALLELISM_OPT);
-        executor = parallelism.map(s -> newFixedThreadPool(parseInt(s))).
-                   orElseGet( () -> newFixedThreadPool(Runtime.getRuntime().availableProcessors()));
-    }
-
-    @Override
-    public <V> TaskView<V> startTask(final Callable<V> task, final Runnable callback) {
-        MonitorableFutureTask<V> futureTask = new MonitorableFutureTask<>(task) {
-            @Override
-            protected void done() {
-                callback.run();
-            }
-        };
-        TaskView<V> taskView = new TaskView<>(futureTask);
-        executor.submit(futureTask);
-        save(taskView);
-        return taskView;
-    }
-
-    @Override
-    public <V> TaskView<V> startTask(String taskName, User user, Map<String, Object> properties) {
-        BatchDownload batchDownload = (BatchDownload) properties.get("batchDownload");
-        TaskView<V> taskView = new TaskView<>(taskName, user, properties);
-        save(taskView);
-        taskQueue.offer(taskView);
-        return taskView;
-    }
-
-    @Override
-    public <V> TaskView<V> startTask(final Callable<V> task) {
-        MonitorableFutureTask<V> futureTask = new MonitorableFutureTask<>(task);
-        TaskView<V> taskView = new TaskView<>(futureTask);
-        executor.submit(futureTask);
-        save(taskView);
-        return taskView;
+        loop = new TaskRunnerLoop(taskFactory, this, latch);
+        executor.submit(loop);
     }
 
     public <V> TaskView<V> getTask(final String taskId) {
@@ -101,43 +77,62 @@ public class TaskManagerMemory implements TaskManager, TaskSupplier {
         TaskView<V> taskView = (TaskView<V>) tasks.get(taskId);
         if (taskView != null) {
             taskView.setResult(result);
+            executedTasks.incrementAndGet();
         } else {
             logger.warn("unknown task id <{}> for result={} call", taskId, result);
         }
     }
 
     @Override
-    public void error(String taskId, Throwable reason) {
-        throw new NotImplementedException("TODO");
+    public void canceled(TaskView<?> task, boolean requeue) {
+        TaskView<?> taskView = tasks.get(task.id);
+        if (taskView != null) {
+            taskView.cancel();
+            if (requeue) {
+                taskQueue.offer(task);
+            }
+        }
     }
 
-    private void save(TaskView<?> taskView) {
+    @Override
+    public void error(String taskId, Throwable reason) {
+        TaskView<?> taskView = tasks.get(taskId);
+        if (taskView != null) {
+            taskView.setError(reason);
+            executedTasks.incrementAndGet();
+        } else {
+            logger.warn("unknown task id <{}> for error={} call", taskId, reason.toString());
+        }
+    }
+
+    public void save(TaskView<?> taskView) {
         tasks.put(taskView.id, taskView);
     }
 
-    public List<Runnable> shutdownNow() {
-        return executor.shutdownNow();
+    @Override
+    public void enqueue(TaskView<?> task) {
+        taskQueue.add(task);
     }
 
     public boolean shutdownAndAwaitTermination(int timeout, TimeUnit timeUnit) throws InterruptedException {
-        executor.shutdown();
+        taskQueue.add(TaskView.nullObject());
+        waitTasksToBeDone(timeout, timeUnit);
+        executor.shutdownNow();
         return executor.awaitTermination(timeout, timeUnit);
     }
 
     public List<TaskView<?>> waitTasksToBeDone(int timeout, TimeUnit timeUnit) {
         return tasks.values().stream().peek(taskView -> {
             try {
-                if (taskView.task != null) {
-                    taskView.task.get(timeout, timeUnit);
-                }
-            } catch (InterruptedException|ExecutionException|TimeoutException|CancellationException e) {
+                taskView.getResult(timeout, timeUnit);
+            } catch (InterruptedException | CancellationException e) {
                 logger.error("task interrupted while running", e);
             }
         }).collect(toList());
     }
 
     public List<TaskView<?>> clearDoneTasks() {
-        return tasks.values().stream().filter(taskView -> taskView.getState() != TaskView.State.RUNNING).map(t -> tasks.remove(t.id)).collect(toList());
+        return tasks.values().stream().filter(taskView -> taskView.getState() != RUNNING).map(t -> tasks.remove(t.id)).collect(toList());
     }
 
     @Override
@@ -145,17 +140,22 @@ public class TaskManagerMemory implements TaskManager, TaskSupplier {
         return (TaskView<V>) tasks.remove(taskName);
     }
 
-    public boolean stopTask(String taskName) {
-        logger.info("cancelling task {}", taskName);
-        return tasks.get(taskName).task.cancel(true);
-    }
-
-    @Override
-    public Map<String, Boolean> stopAllTasks(User user) {
-        return getTasks().stream().
-                filter(t -> user.equals(t.getUser())).
-                filter(t -> t.getState() == TaskView.State.RUNNING).collect(
-                        toMap(t -> t.id, t -> stopTask(t.id)));
+    public boolean stopTask(String taskId) {
+        TaskView<?> taskView = tasks.get(taskId);
+        if (taskView != null) {
+            switch (taskView.getState()) {
+                case QUEUED:
+                    boolean removed = taskQueue.remove(taskView);
+                    canceled(taskView, false);
+                    return removed;
+                case RUNNING:
+                    loop.cancel(taskId, false);
+                    return true;
+            }
+        } else {
+            logger.warn("unknown task id <{}> for cancel call", taskId);
+        }
+        return false;
     }
 
     @Override
@@ -165,6 +165,27 @@ public class TaskManagerMemory implements TaskManager, TaskSupplier {
 
     @Override
     public void close() throws IOException {
-        shutdownNow();
+        executor.shutdownNow();
+        try {
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    int numberOfExecutedTasks() {
+        return executedTasks.get();
+    }
+
+    @Override
+    public void clear() {
+        executedTasks.set(0);
+        taskQueue.clear();
+        tasks.clear();
+    }
+
+    @Override
+    public void addEventListener(Consumer<TaskEvent> callback) {
+        // no need for this we use task runner reference for stopping tasks
     }
 }

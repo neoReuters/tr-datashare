@@ -9,7 +9,12 @@ import org.apache.commons.io.FileUtils;
 import org.icij.datashare.PropertiesProvider;
 import org.icij.datashare.db.JooqRepository;
 import org.icij.datashare.session.LocalUserFilter;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.mockito.Mock;
 
@@ -73,8 +78,8 @@ public class RootResourcePluginTest implements FluentRestTest {
         server.configure(routes -> routes.add(new RootResource(propertiesProvider)));
         get("/").should().respond(200).contain("datashare-client");
         get("").should().respond(200).contain("datashare-client");
+
     }
-    
 
     @Test
     public void test_get_with_empty_plugin_directory() {

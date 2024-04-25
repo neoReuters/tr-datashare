@@ -5,9 +5,9 @@ import com.google.inject.Singleton;
 import org.icij.datashare.com.bus.amqp.AmqpConsumer;
 import org.icij.datashare.com.bus.amqp.AmqpInterlocutor;
 import org.icij.datashare.com.bus.amqp.AmqpQueue;
-import org.icij.datashare.com.bus.amqp.EventSaver;
-import org.icij.datashare.com.bus.amqp.ProgressEvent;
+import org.icij.datashare.com.bus.amqp.CancelEvent;
 import org.icij.datashare.com.bus.amqp.ResultEvent;
+import org.icij.datashare.com.bus.amqp.TaskEvent;
 import org.icij.datashare.com.bus.amqp.TaskViewEvent;
 import org.icij.datashare.mode.CommonMode;
 import org.icij.datashare.user.User;
@@ -16,17 +16,12 @@ import org.redisson.RedissonMap;
 import org.redisson.api.RedissonClient;
 import org.redisson.command.CommandSyncService;
 import org.redisson.liveobject.core.RedissonObjectBuilder;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Phaser;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
@@ -38,8 +33,8 @@ import static java.util.stream.Collectors.toList;
 public class TaskManagerAmqp implements TaskManager {
     private final Map<String, TaskView<?>> tasks;
     private final AmqpInterlocutor amqp;
-    private final AmqpConsumer<ProgressEvent, EventSaver<ProgressEvent>> eventConsumer;
-    private final AmqpConsumer<ResultEvent<? extends Serializable>, EventSaver<ResultEvent<? extends Serializable>>> resultConsumer;
+    private final AmqpConsumer<TaskEvent, Consumer<TaskEvent>> eventConsumer;
+    private final AmqpConsumer<ResultEvent<? extends Serializable>, Consumer<ResultEvent<? extends Serializable>>> resultConsumer;
 
     @Inject
     public TaskManagerAmqp(AmqpInterlocutor amqp, RedissonClient redissonClient) throws IOException {
@@ -51,53 +46,30 @@ public class TaskManagerAmqp implements TaskManager {
         CommandSyncService commandSyncService = new CommandSyncService(((Redisson) redissonClient).getConnectionManager(), new RedissonObjectBuilder(redissonClient));
         tasks = new RedissonMap<>(new TaskManagerRedis.TaskViewCodec(), commandSyncService, CommonMode.DS_TASK_MANAGER_QUEUE_NAME, redissonClient, null, null);
 
-        eventConsumer = new AmqpConsumer<>(amqp, event -> {
-            TaskView<?> taskView = tasks.get(event.taskId);
-            taskView.setProgress(event.rate);
-            tasks.put(event.taskId, taskView);
-            ofNullable(eventCallback).ifPresent(Runnable::run);
-        }, AmqpQueue.EVENT, ProgressEvent.class);
-        eventConsumer.consumeEvents();
+        eventConsumer = new AmqpConsumer<>(amqp, event ->
+                ofNullable(TaskManager.super.handleAck(event)).flatMap(t ->
+                        ofNullable(eventCallback)).ifPresent(Runnable::run), AmqpQueue.EVENT, TaskEvent.class).consumeEvents();
 
-        resultConsumer = new AmqpConsumer<>(amqp, event -> {
-            TaskView<? extends Serializable> taskView = (TaskView<? extends Serializable>) tasks.get(event.taskId);
-            if (Throwable.class.isAssignableFrom(event.result.getClass())) {
-                taskView.setError((Throwable) event.result);
-            } else {
-                taskView.setResult(event.result);
-            }
-            tasks.put(event.taskId, taskView);
-            ofNullable(eventCallback).ifPresent(Runnable::run);
-        }, AmqpQueue.TASK_RESULT, (Class<ResultEvent<? extends Serializable>>) (Class<?>) ResultEvent.class);
-        resultConsumer.consumeEvents();
-    }
-
-    @Override
-    public <V> TaskView<V> startTask(Callable<V> task, Runnable callback) {
-        return null;
-    }
-
-    @Override
-    public <V> TaskView<V> startTask(String taskName, User user, Map<String, Object> properties) throws IOException {
-        TaskView<V> taskView = new TaskView<>(taskName, user, properties);
-        save(taskView);
-        amqp.publish(AmqpQueue.TASK, new TaskViewEvent(taskView));
-        return taskView;
-    }
-
-    @Override
-    public <V> TaskView<V> startTask(Callable<V> task) {
-        return null;
+        resultConsumer = new AmqpConsumer<>(amqp, event ->
+                ofNullable(TaskManager.super.handleAck(event)).flatMap(t ->
+                        ofNullable(eventCallback)).ifPresent(Runnable::run), AmqpQueue.TASK_RESULT,
+                (Class<ResultEvent<? extends Serializable>>) (Class<?>) ResultEvent.class).consumeEvents();
     }
 
     @Override
     public boolean stopTask(String taskId) {
-        return false;
-    }
-
-    @Override
-    public Map<String, Boolean> stopAllTasks(User user) {
-        return null;
+        TaskView<?> taskView = tasks.get(taskId);
+        if (taskView != null) {
+            try {
+                amqp.publish(AmqpQueue.EVENT, new CancelEvent(taskId, false));
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+            return true;
+        } else {
+            logger.warn("unknown task id <{}> for cancel call", taskId);
+            return false;
+        }
     }
 
     @Override
@@ -110,8 +82,13 @@ public class TaskManagerAmqp implements TaskManager {
         return false;
     }
 
-    void save(TaskView<?> task) {
+    public void save(TaskView<?> task) {
         tasks.put(task.id, task);
+    }
+
+    @Override
+    public void enqueue(TaskView<?> task) throws IOException {
+        amqp.publish(AmqpQueue.TASK, new TaskViewEvent(task));
     }
 
     @Override
@@ -138,5 +115,10 @@ public class TaskManagerAmqp implements TaskManager {
         clearDoneTasks();
         resultConsumer.cancel();
         eventConsumer.cancel();
+    }
+
+    @Override
+    public void clear() {
+        tasks.clear();
     }
 }

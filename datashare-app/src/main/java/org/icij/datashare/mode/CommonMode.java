@@ -6,6 +6,7 @@ import com.google.inject.AbstractModule;
 import com.google.inject.CreationException;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import com.google.inject.Key;
 import com.google.inject.Module;
 import com.google.inject.TypeLiteral;
 import com.google.inject.assistedinject.FactoryModuleBuilder;
@@ -37,6 +38,7 @@ import org.icij.datashare.tasks.TaskManagerRedis;
 import org.icij.datashare.tasks.TaskModifier;
 import org.icij.datashare.tasks.TaskSupplier;
 import org.icij.datashare.tasks.TaskSupplierAmqp;
+import org.icij.datashare.tasks.TaskSupplierRedis;
 import org.icij.datashare.tasks.TaskView;
 import org.icij.datashare.text.indexing.Indexer;
 import org.icij.datashare.text.indexing.LanguageGuesser;
@@ -66,6 +68,7 @@ import java.util.function.Consumer;
 import static com.fasterxml.jackson.databind.DeserializationFeature.ACCEPT_EMPTY_STRING_AS_NULL_OBJECT;
 import static java.util.Optional.ofNullable;
 import static org.icij.datashare.PluginService.PLUGINS_BASE_URL;
+import static org.icij.datashare.cli.DatashareCliOptions.*;
 import static org.icij.datashare.text.indexing.elasticsearch.ElasticsearchConfiguration.createESClient;
 
 public abstract class CommonMode extends AbstractModule {
@@ -73,9 +76,11 @@ public abstract class CommonMode extends AbstractModule {
     public static final String DS_BATCHSEARCH_QUEUE_NAME = "ds:batchsearch:queue";
     public static final String DS_BATCHDOWNLOAD_QUEUE_NAME = "ds:batchdownload:queue";
     public static final String DS_TASK_MANAGER_QUEUE_NAME = "ds:task:manager";
+    public static final String DS_TASK_MANAGER_MAP_NAME = "ds:task:manager:tasks";
     protected final PropertiesProvider propertiesProvider;
     protected final Mode mode;
     private final Injector injector;
+    private PipelineRegistry pipelineRegistry;
 
     protected CommonMode(Properties properties) {
         propertiesProvider = properties == null ? new PropertiesProvider() :
@@ -107,17 +112,17 @@ public abstract class CommonMode extends AbstractModule {
                 return new EmbeddedMode(properties);
             case SERVER:
                 return new ServerMode(properties);
-            case BATCH_SEARCH:
-            case BATCH_DOWNLOAD:
+            case TASK_RUNNER:
             case CLI:
                 return new CliMode(properties);
             default:
-                throw new IllegalStateException("unknown mode : " + properties.getProperty("mode"));
+                throw new IllegalStateException("unknown mode : " + properties.getProperty(MODE_OPT));
         }
     }
 
     public Mode getMode() {return mode;}
     public <T> T get(Class<T> type) {return injector.getInstance(type);}
+    public <T> T get(Key<T> key) {return injector.getInstance(key);}
     public Injector createChildInjector(Module... modules) {
         return injector.createChildInjector(modules);
     }
@@ -141,13 +146,13 @@ public abstract class CommonMode extends AbstractModule {
             }
         }
 
-        QueueType batchQueueType = QueueType.valueOf(propertiesProvider.get("batchQueueType").orElse(QueueType.MEMORY.name()));
+        QueueType batchQueueType = getQueueType(propertiesProvider, BATCH_QUEUE_TYPE_OPT, QueueType.MEMORY);
         switch ( batchQueueType ) {
             case REDIS:
                 configureBatchQueuesRedis(redissonClient);
                 bind(TaskManager.class).to(TaskManagerRedis.class);
-                bind(TaskModifier.class).to(TaskManagerRedis.class);
-                bind(TaskSupplier.class).to(TaskManagerRedis.class);
+                bind(TaskModifier.class).to(TaskSupplierRedis.class);
+                bind(TaskSupplier.class).to(TaskSupplierRedis.class);
                 break;
             case AMQP:
                 configureBatchQueuesRedis(redissonClient);
@@ -169,11 +174,11 @@ public abstract class CommonMode extends AbstractModule {
         bind(TesseractOCRParserWrapper.class).toInstance(new TesseractOCRParserWrapper());
 
         configureIndexingQueues(propertiesProvider);
-        feedPipelineRegistry(propertiesProvider);
+        pipelineRegistry = bindPipelineRegistry(propertiesProvider);
     }
 
     private void configureIndexingQueues(final PropertiesProvider propertiesProvider) {
-        QueueType queueType = QueueType.valueOf(propertiesProvider.get("queueType").orElse(QueueType.MEMORY.name()));
+        QueueType queueType = getQueueType(propertiesProvider, QUEUE_TYPE_OPT, QueueType.MEMORY);
         if ( queueType == QueueType.MEMORY ) {
             bind(new TypeLiteral<DocumentCollectionFactory<String>>(){}).toInstance(new MemoryDocumentCollectionFactory<>());
             bind(new TypeLiteral<DocumentCollectionFactory<Path>>() {}).toInstance(new MemoryDocumentCollectionFactory<>());
@@ -193,19 +198,6 @@ public abstract class CommonMode extends AbstractModule {
         bind(new TypeLiteral<BlockingQueue<TaskView<?>>>(){}).toInstance(new RedisBlockingQueue<>(redissonClient, DS_BATCHDOWNLOAD_QUEUE_NAME));
     }
 
-   public  void feedPipelineRegistry(final PropertiesProvider propertiesProvider) {
-        PipelineRegistry pipelineRegistry = new PipelineRegistry(propertiesProvider);
-        pipelineRegistry.register(EmailPipeline.class);
-        pipelineRegistry.register(Pipeline.Type.CORENLP);
-        try {
-            pipelineRegistry.load();
-        } catch (FileNotFoundException e) {
-            logger.info("extensions dir not found " + e.getMessage());
-        }
-        bind(PipelineRegistry.class).toInstance(pipelineRegistry);
-        bind(LanguageGuesser.class).to(OptimaizeLanguageGuesser.class);
-    }
-
     public Properties properties() {
         return propertiesProvider.getProperties();
     }
@@ -215,8 +207,7 @@ public abstract class CommonMode extends AbstractModule {
                 defaultRoutes(
                             addCorsFilter(routes,
                                     propertiesProvider
-                            ),
-                            propertiesProvider
+                            )
                 )
         );
     }
@@ -242,9 +233,14 @@ public abstract class CommonMode extends AbstractModule {
     }
 
      public Routes addExtensionsConfiguration(Routes routes) {
-        String extensionsDir = getExtensionsDir();
-        if (extensionsDir != null) {
-            loadExtensions(routes, extensionsDir);
+         ExtensionLoader extensionLoader = new ExtensionLoader(Paths.get(ofNullable(getExtensionsDir()).orElse("./extensions")));
+         if (extensionLoader.extensionsDir != null) {
+            try {
+                extensionLoader.load((Consumer<Class<?>>) routes::add, this::isEligibleForLoading);
+                pipelineRegistry.load(extensionLoader);
+            } catch (FileNotFoundException e) {
+                logger.warn("Extensions directory not found: {}", extensionLoader.extensionsDir);
+            }
         }
         return routes;
     }
@@ -259,7 +255,20 @@ public abstract class CommonMode extends AbstractModule {
         repositoryFactory.initDatabase();
     }
 
-    private Routes defaultRoutes(final Routes routes, PropertiesProvider provider) {
+    protected boolean hasProperty(QueueType queueType) {
+        return propertiesProvider.getProperties().contains(queueType.name());
+    }
+
+    protected PipelineRegistry bindPipelineRegistry(final PropertiesProvider propertiesProvider) {
+        PipelineRegistry pipelineRegistry = new PipelineRegistry(propertiesProvider);
+        pipelineRegistry.register(EmailPipeline.class);
+        pipelineRegistry.register(Pipeline.Type.CORENLP);
+        bind(PipelineRegistry.class).toInstance(pipelineRegistry);
+        bind(LanguageGuesser.class).to(OptimaizeLanguageGuesser.class);
+        return pipelineRegistry;
+    }
+
+    private Routes defaultRoutes(final Routes routes) {
         routes.setIocAdapter(new GuiceAdapter(injector))
                 .add(RootResource.class)
                 .add(SettingsResource.class)
@@ -278,10 +287,6 @@ public abstract class CommonMode extends AbstractModule {
         return routes;
     }
 
-    protected boolean hasProperty(QueueType queueType) {
-        return propertiesProvider.getProperties().contains(queueType.name());
-    }
-
     private String getExtensionsDir() {
         return propertiesProvider.getProperties().getProperty(PropertiesProvider.EXTENSIONS_DIR);
     }
@@ -290,22 +295,18 @@ public abstract class CommonMode extends AbstractModule {
         return propertiesProvider.getProperties().getProperty(PropertiesProvider.PLUGINS_DIR);
     }
 
-    private void loadExtensions(Routes routes, String extensionsDir) {
-        try {
-            Path extensionsPath = Paths.get(extensionsDir);
-            ExtensionLoader loader = new ExtensionLoader(extensionsPath);
-            loader.load((Consumer<Class<?>>) routes::add, this::isEligibleForLoading);
-        } catch (FileNotFoundException e) {
-            logger.warn("Extensions directory not found: " + extensionsDir);
-        }
-    }
-
     private boolean isEligibleForLoading(Class<?> c) {
         return c.isAnnotationPresent(Prefix.class) || c.isAnnotationPresent(Get.class);
     }
 
     @NotNull
     public static Mode getMode(Properties properties) {
-        return Mode.valueOf(ofNullable(properties).orElse(new Properties()).getProperty("mode"));
+        return Mode.valueOf(ofNullable(properties).orElse(new Properties()).getProperty(MODE_OPT));
+    }
+
+    public static QueueType getQueueType(PropertiesProvider properties, String propertyName, QueueType defaultQueueType){
+        return QueueType.valueOf(
+            ofNullable(properties).orElse(new PropertiesProvider()).
+                get(propertyName).orElse(defaultQueueType.name()).toUpperCase());
     }
 }

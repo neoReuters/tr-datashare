@@ -2,11 +2,18 @@ package org.icij.datashare.web;
 
 import net.codestory.rest.Response;
 import org.icij.datashare.PropertiesProvider;
-import org.icij.datashare.batch.*;
+import org.icij.datashare.batch.BatchSearch;
+import org.icij.datashare.batch.BatchSearchRecord;
+import org.icij.datashare.batch.BatchSearchRepository;
+import org.icij.datashare.batch.SearchResult;
+import org.icij.datashare.batch.WebQueryBuilder;
 import org.icij.datashare.db.JooqBatchSearchRepository;
 import org.icij.datashare.db.JooqRepository;
 import org.icij.datashare.function.Pair;
 import org.icij.datashare.session.LocalUserFilter;
+import org.icij.datashare.tasks.BatchSearchRunner;
+import org.icij.datashare.tasks.TaskFactory;
+import org.icij.datashare.tasks.TaskManagerMemory;
 import org.icij.datashare.user.User;
 import org.icij.datashare.web.testhelpers.AbstractProdWebServerTest;
 import org.junit.Before;
@@ -16,9 +23,12 @@ import org.mockito.Mock;
 
 import java.io.IOException;
 import java.nio.file.Paths;
-import java.util.*;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -30,8 +40,11 @@ import static org.fest.assertions.Assertions.assertThat;
 import static org.icij.datashare.CollectionUtils.asSet;
 import static org.icij.datashare.text.Project.project;
 import static org.icij.datashare.text.ProjectProxy.proxy;
+import static org.mockito.Mockito.mock;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.MockitoAnnotations.initMocks;
@@ -39,7 +52,8 @@ import static org.mockito.MockitoAnnotations.initMocks;
 public class BatchSearchResourceTest extends AbstractProdWebServerTest {
     @Mock BatchSearchRepository batchSearchRepository;
     @Mock JooqRepository jooqRepository;
-    BlockingQueue<String> batchSearchQueue = new ArrayBlockingQueue<>(5);
+    @Mock TaskFactory factory;
+    TaskManagerMemory taskManager;
 
     @Test
     public void test_upload_batch_search_csv_without_name_should_send_bad_request() {
@@ -81,7 +95,8 @@ public class BatchSearchResourceTest extends AbstractProdWebServerTest {
                 singletonList(project("prj")), "nameValue", null,
                 asSet("query", "éèàç"), new Date(), BatchSearch.State.QUEUED, User.local());
         verify(batchSearchRepository).save(eq(expected));
-        assertThat(batchSearchQueue.take()).isEqualTo(expected.uuid);
+        assertThat(taskManager.getTasks()).hasSize(1);
+        assertThat(taskManager.getTasks().get(0).name).isEqualTo(BatchSearchRunner.class.getName());
     }
 
     @Test
@@ -174,7 +189,8 @@ public class BatchSearchResourceTest extends AbstractProdWebServerTest {
         assertThat(argument.getValue().queryTemplate).isEqualTo(sourceSearch.queryTemplate);
 
         assertThat(argument.getValue().state).isEqualTo(BatchSearchRecord.State.QUEUED);
-        assertThat(batchSearchQueue.take()).isEqualTo(argument.getValue().uuid);
+        assertThat(taskManager.getTasks()).hasSize(1);
+        assertThat(taskManager.getTasks().get(0).name).isEqualTo(BatchSearchRunner.class.getName());
     }
 
     @Test
@@ -334,7 +350,7 @@ public class BatchSearchResourceTest extends AbstractProdWebServerTest {
             PropertiesProvider propertiesProvider = new PropertiesProvider(new HashMap<>() {{
                 put("rootHost", "http://foo.com:12345");
             }});
-            routes.add(new BatchSearchResource(batchSearchRepository, batchSearchQueue, propertiesProvider)).
+            routes.add(new BatchSearchResource(propertiesProvider, taskManager, batchSearchRepository)).
                     filter(new LocalUserFilter(propertiesProvider, jooqRepository));
         });
         when(batchSearchRepository.get(User.local(), "batchSearchId")).thenReturn(new BatchSearch(singletonList(project("prj")), "name", "desc", asSet("q"), User.local()));
@@ -384,7 +400,7 @@ public class BatchSearchResourceTest extends AbstractProdWebServerTest {
     @Test
     public void test_get_queries_json() {
         when(batchSearchRepository.getQueries(User.local(), "batchSearchId", 0, 0,null,null, -1)).
-                thenReturn(new HashMap<String, Integer>() {{
+                thenReturn(new HashMap<>() {{
                     put("q1", 1);
                     put("q2", 2);
                 }});
@@ -397,7 +413,7 @@ public class BatchSearchResourceTest extends AbstractProdWebServerTest {
     @Test
     public void test_get_queries_csv() {
         when(batchSearchRepository.getQueries(User.local(), "batchSearchId",0,0,null,null, -1)).
-                thenReturn(new HashMap<String, Integer>() {{
+                thenReturn(new HashMap<>() {{
                     put("q1", 1);
                     put("q2", 2);
                 }});
@@ -410,7 +426,7 @@ public class BatchSearchResourceTest extends AbstractProdWebServerTest {
     @Test
     public void test_get_queries_filtered_to_max_results() {
         when(batchSearchRepository.getQueries(User.local(), "batchSearchId", 0, 0,null,null, 200)).
-                thenReturn(new HashMap<String, Integer>() {{
+                thenReturn(new HashMap<>() {{
                     put("q1", 100);
                     put("q2", 200);
                 }});
@@ -474,7 +490,9 @@ public class BatchSearchResourceTest extends AbstractProdWebServerTest {
     @Before
     public void setUp() {
         initMocks(this);
-        configure(routes -> routes.add(new BatchSearchResource(batchSearchRepository, batchSearchQueue, new PropertiesProvider())).
+        taskManager = new TaskManagerMemory(new ArrayBlockingQueue<>(5), factory);
+        when(factory.createBatchSearchRunner(any(), any())).thenReturn(mock(BatchSearchRunner.class));
+        configure(routes -> routes.add(new BatchSearchResource(new PropertiesProvider(), taskManager, batchSearchRepository)).
                 filter(new LocalUserFilter(new PropertiesProvider(), jooqRepository)));
     }
 

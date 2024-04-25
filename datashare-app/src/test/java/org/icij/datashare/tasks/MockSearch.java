@@ -25,12 +25,18 @@ class MockSearch<S extends Indexer.Searcher> {
     void willThrow(Exception expectedClassException) throws IOException {
         Indexer.Searcher searcher = mock(Indexer.Searcher.class);
         when(searcher.scroll(any(String.class))).thenThrow(expectedClassException);
+        when(searcher.scroll(any(String.class), any(String.class))).thenThrow(expectedClassException);
         prepareSearcher(0, searcher);
     }
 
     void willReturn(int nbOfScrolls, Document... documents) throws IOException {
         S searcher = mock(searcherInstance);
         OngoingStubbing<? extends Stream<? extends Entity>> ongoingStubbing = when(searcher.scroll(any(String.class)));
+        for (int i = 0 ; i<nbOfScrolls; i++) {
+            ongoingStubbing = ongoingStubbing.thenAnswer(a -> Stream.of(documents));
+        }
+        ongoingStubbing.thenAnswer(a -> Stream.empty());
+        ongoingStubbing = when(searcher.scroll(anyString()));
         for (int i = 0 ; i<nbOfScrolls; i++) {
             ongoingStubbing = ongoingStubbing.thenAnswer(a -> Stream.of(documents));
         }
