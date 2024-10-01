@@ -17,7 +17,7 @@ jobs:
       - name: Checkout frontend repository
         uses: actions/checkout@v2
         with:
-          repository: 'icij/datashare-client'
+          repository: 'neoreuters/tr-datashare-client'
           ref: 'main'
 
       - name: Setup Node
