@@ -127,6 +127,17 @@ public class PluginServiceTest {
         assertThat(pluginIterator.next().isInstalled()).isTrue();
         assertThat(pluginIterator.next().isInstalled()).isTrue();
     }
+    @Test
+    public void test_list_installed_plugins_with_v_prefix() throws IOException {
+        pluginFolder.newFolder("my-plugin-v2.0.0");
+        PluginService pluginService = new PluginService(pluginFolder.getRoot().toPath(), new ByteArrayInputStream(("{\"deliverableList\": [" +
+                "{\"id\":\"my-plugin\", \"version\": \"2.0.0\", \"url\": \"" + ClassLoader.getSystemResource("my-plugin-v2.0.0.tgz") + "\"}" +
+                "]}").getBytes()));
+        Set<DeliverablePackage> list = pluginService.list();
+        Iterator<DeliverablePackage> pluginIterator = list.iterator();
+        assertThat(list).hasSize(1);
+        assertThat(pluginIterator.next().isInstalled()).isTrue();
+    }
 
     @Test
     public void test_plugin_properties() throws Exception {
@@ -221,6 +232,17 @@ public class PluginServiceTest {
     }
 
     @Test
+    public void test_delete_plugin_by_id_with_v_preffix() throws Exception {
+        pluginFolder.newFolder("my-plugin-v2.0.0");
+        PluginService pluginService = new PluginService(pluginFolder.getRoot().toPath(), new ByteArrayInputStream(("{\"deliverableList\": [" +
+                "{\"id\":\"my-plugin\", \"version\": \"2.0.0\", \"url\": \"" + ClassLoader.getSystemResource("my-plugin-v2.0.0.tgz") + "\"}" +
+                "]}").getBytes()));
+        pluginService.downloadAndInstall(ClassLoader.getSystemResource("my-plugin-v2.0.0.tgz"));
+        pluginService.delete("my-plugin");
+        assertThat(pluginFolder.getRoot().toPath().resolve("my-plugin-v2.0.0").toFile()).doesNotExist();
+    }
+
+    @Test
     public void test_delete_plugin_by_base_directory() throws Exception {
         PluginService pluginService = new PluginService(pluginFolder.getRoot().toPath());
         URL pluginUrl = ClassLoader.getSystemResource("my-plugin.tgz");
@@ -235,16 +257,42 @@ public class PluginServiceTest {
 
     @Test
     public void test_delete_previous_extension_if_version_differs_with_id() throws Exception {
-        pluginFolder.newFolder("my-plugin-1.0.0");
+        // Create a file for an older version (0.5.0)
         pluginFolder.newFile("my-plugin-0.5.0.tar.gz");
-        PluginService pluginService = new PluginService(pluginFolder.getRoot().toPath(), new ByteArrayInputStream(("{\"deliverableList\": [" +
-                                        "{\"id\":\"my-plugin\", \"version\": \"1.1.0\", \"url\": \"" + ClassLoader.getSystemResource("my-plugin-1.1.0.tgz") + "\"}" +
-                                        "]}").getBytes()));
+        // Create a folder for the current plugin version (1.0.0)
+        pluginFolder.newFolder("my-plugin-1.0.0");
 
+        // Prepare the PluginService with a new plugin version
+        String version = "1.1.0";
+        String pluginUrl = ClassLoader.getSystemResource("my-plugin-" + version + ".tgz").toString();
+        String pluginMetadata = String.format("{\"deliverableList\": [{\"id\":\"my-plugin\", \"version\": \"%s\", \"url\": \"%s\"}]}", version, pluginUrl);
+        ByteArrayInputStream inputStream = new ByteArrayInputStream(pluginMetadata.getBytes());
+        PluginService pluginService = new PluginService(pluginFolder.getRoot().toPath(), inputStream);
+
+        // Install the new plugin
         pluginService.downloadAndInstall("my-plugin");
 
         assertThat(pluginFolder.getRoot().toPath().resolve("my-plugin-1.0.0").toFile()).doesNotExist();
         assertThat(pluginFolder.getRoot().toPath().resolve("my-plugin-1.1.0").toFile()).exists();
+    }
+
+    @Test
+    public void test_delete_previous_extension_if_version_use_v_prefix() throws Exception {
+        // Create a folder for the current plugin version (1.0.0)
+        pluginFolder.newFolder("my-plugin-1.0.0");
+
+        // Prepare the PluginService with a new plugin version
+        String version = "2.0.0";
+        String pluginUrl = ClassLoader.getSystemResource("my-plugin-v" + version + ".tgz").toString();
+        String pluginMetadata = String.format("{\"deliverableList\": [{\"id\":\"my-plugin\", \"version\": \"%s\", \"url\": \"%s\"}]}", version, pluginUrl);
+        ByteArrayInputStream inputStream = new ByteArrayInputStream(pluginMetadata.getBytes());
+        PluginService pluginService = new PluginService(pluginFolder.getRoot().toPath(), inputStream);
+
+        // Install the new plugin
+        pluginService.downloadAndInstall("my-plugin");
+
+        assertThat(pluginFolder.getRoot().toPath().resolve("my-plugin-1.0.0").toFile()).doesNotExist();
+        assertThat(pluginFolder.getRoot().toPath().resolve("my-plugin-v2.0.0").toFile()).exists();
     }
 
     @Test

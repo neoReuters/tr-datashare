@@ -388,11 +388,23 @@ public class JooqRepositoryTest {
     }
 
     @Test
+    public void test_get_user_events_items() {
+        User user = new User("userid");
+        UserEvent userEvent1 = new UserEvent(user, DOCUMENT, "doc_id", Paths.get("doc_uri").toUri());
+        UserEvent userEvent2 = new UserEvent(user, SEARCH, "search_id", Paths.get("searcb_uri").toUri());
+        repository.addToUserHistory(singletonList(project("prj")), userEvent1);
+        repository.addToUserHistory(singletonList(project("prj")), userEvent2);
+
+        assertThat(repository.getUserEvents(user)).containsExactly(userEvent1, userEvent2);
+    }
+
+    @Test
     public void test_delete_all_project() {
         User user = new User("userid");
         repository.star(project("prj"), user, singletonList("doc_id"));
         repository.tag(project("prj"), "doc_id", tag("tag1"), tag("tag2"));
         repository.recommend(project("prj"), user, List.of("doc_id"));
+        repository.addToUserHistory(singletonList(project("prj")), new UserEvent(user, DOCUMENT, "doc_id", Paths.get("doc_uri").toUri()));
 
         assertThat(repository.deleteAll("prj")).isTrue();
         assertThat(repository.deleteAll("prj")).isFalse();
@@ -400,6 +412,8 @@ public class JooqRepositoryTest {
         assertThat(repository.getDocuments(project("prj"), tag("tag1"), tag("tag2"))).isEmpty();
         assertThat(repository.getStarredDocuments(user)).isEmpty();
         assertThat(repository.getRecommentationsBy(project("prj"), List.of(user))).isEmpty();
+        assertThat(repository.getUserHistory(user, DOCUMENT, 0, 10, "modification_date",true, "prj")).isEmpty();
+        assertThat(repository.getUserEvents(user)).isEmpty();
     }
 
     @Test

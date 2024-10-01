@@ -114,6 +114,7 @@ public class DatashareCli {
         DatashareCliOptions.charset(parser);
         DatashareCliOptions.stages(parser);
         DatashareCliOptions.dataDir(parser);
+        DatashareCliOptions.artifactDir(parser);
         DatashareCliOptions.enableOcr(parser);
         DatashareCliOptions.language(parser);
         DatashareCliOptions.ocrLanguage(parser);
@@ -150,6 +151,7 @@ public class DatashareCli {
         DatashareCliOptions.createIndex(parser);
         DatashareCliOptions.defaultUser(parser);
         DatashareCliOptions.defaultProject(parser);
+        DatashareCliOptions.oauthClaimIdAttribute(parser);
         DatashareCliOptions.esHost(parser);
         DatashareCliOptions.queueName(parser);
         DatashareCliOptions.cors(parser);
@@ -178,6 +180,7 @@ public class DatashareCli {
         DatashareCliOptions.digestProjectName(parser);
         DatashareCliOptions.noDigestProject(parser);
         DatashareCliOptions.logLevel(parser);
+        DatashareCliOptions.searchQuery(parser);
         return parser;
     }
 

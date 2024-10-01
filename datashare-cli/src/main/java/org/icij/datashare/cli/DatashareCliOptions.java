@@ -119,6 +119,8 @@ public final class DatashareCliOptions {
     public static final String TCP_LISTEN_PORT_OPT = "tcpListenPort";
     public static final String VERSION_ABBR_OPT = "v";
     public static final String VERSION_OPT = "version";
+    public static final String ARTIFACT_DIR_OPT = "artifactDir";
+    public static final String SEARCH_QUERY_OPT = "searchQuery";
 
     private static final Path DEFAULT_DATASHARE_HOME = Paths.get(System.getProperty("user.home"), ".local/share/datashare");
     private static final Integer DEFAULT_NLP_PARALLELISM = 1;
@@ -138,7 +140,7 @@ public final class DatashareCliOptions {
     public static final String DEFAULT_CHARSET = Charset.defaultCharset().toString();
     public static final String DEFAULT_CLUSTER_NAME = "datashare";
     public static final String DEFAULT_CORS = "no-cors";
-    public static final String DEFAULT_DATA_SOURCE_URL = "jdbc:sqlite:file:" + DEFAULT_DATASHARE_HOME.resolve("dist/datashare.db").toString();
+    public static final String DEFAULT_DATA_SOURCE_URL = "jdbc:sqlite:file:" + DEFAULT_DATASHARE_HOME.resolve("dist/datashare.db");
     public static final String DEFAULT_DEFAULT_PROJECT = "local-datashare";
     public static final String DEFAULT_ELASTICSEARCH_ADDRESS = "http://elasticsearch:9200";
     public static final String DEFAULT_ELASTICSEARCH_DATA_PATH = DEFAULT_DATASHARE_HOME.resolve("es").toString();
@@ -164,6 +166,8 @@ public final class DatashareCliOptions {
     public static final int DEFAULT_SCROLL_SLICES = 1;
     public static final int DEFAULT_TCP_LISTEN_PORT = 8080;
     public static final int DEFAULT_SESSION_TTL_SECONDS = 43200;
+    public static final String DEFAULT_MAX_CONTENT_LENGTH = "20000000";
+
     // A list of aliases for retro-compatibility when an option changed
     public static final Map<String, String> OPT_ALIASES = Map.ofEntries(
             Map.entry(PORT_OPT, TCP_LISTEN_PORT_OPT)
@@ -337,6 +341,13 @@ public final class DatashareCliOptions {
                 .withRequiredArg()
                 .ofType(File.class)
                 .defaultsTo(new File(DEFAULT_DATA_DIR));
+    }
+
+    static void artifactDir(OptionParser parser) {
+        parser.acceptsAll(
+                asList(ARTIFACT_DIR_OPT),
+                "Artifact directory for embedded caching. If not provided datashare will use memory." )
+                .withRequiredArg();
     }
 
     static void rootHost(OptionParser parser) {
@@ -551,7 +562,7 @@ public final class DatashareCliOptions {
 
     static void dataSourceUrl(OptionParser parser) {
         parser.acceptsAll(
-                singletonList(DATA_SOURCE_URL_OPT), "Datasource URL")
+                singletonList(DATA_SOURCE_URL_OPT), "Datasource URL. For using memory you can use 'jdbc:sqlite:file:memorydb.db?mode=memory&cache=shared'")
                 .withRequiredArg()
                 .ofType(String.class)
                 .defaultsTo(DEFAULT_DATA_SOURCE_URL);
@@ -718,8 +729,9 @@ public final class DatashareCliOptions {
     public static void maxContentLength(OptionParser parser) {
         parser.acceptsAll(
                 singletonList(MAX_CONTENT_LENGTH_OPT), "Maximum length (in bytes) of extracted text that could be indexed " +
-                        "(-1 means no limit and value should be less or equal than 2G). Human readable suffix K/M/G for KB/MB/GB (Default -1)")
+                        "(-1 means no limit and value should be less or equal than 2G). Human readable suffix K/M/G for KB/MB/GB (Default 20M)")
                 .withRequiredArg()
+                .defaultsTo(DEFAULT_MAX_CONTENT_LENGTH)
                 .withValuesConvertedBy(regex("[0-9]+[KMG]?"));
     }
 
@@ -770,6 +782,18 @@ public final class DatashareCliOptions {
                 .withRequiredArg()
                 .ofType( String.class )
                 .defaultsTo(DEFAULT_LOG_LEVEL);
+    }
+
+    public static void oauthClaimIdAttribute(OptionParser parser) {
+        parser.acceptsAll(singletonList("oauthClaimIdAttribute"), "Json field name sent by the Identity Provider that contains user identifier value.")
+                .withRequiredArg()
+                .ofType(String.class);
+    }
+
+    public static void searchQuery(OptionParser parser) {
+        parser.acceptsAll(singletonList(SEARCH_QUERY_OPT), "Json query for filtering index matches for EnqueueFromIndex task.")
+                .withRequiredArg()
+                .ofType(String.class);
     }
 
     public static ValueConverter<String> toAbsolute() {

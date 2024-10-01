@@ -4,23 +4,34 @@ import org.apache.tika.exception.TikaException;
 import org.apache.tika.parser.DigestingParser;
 import org.apache.tika.parser.digestutils.CommonsDigester;
 import org.icij.datashare.PropertiesProvider;
+import org.icij.datashare.cli.DatashareCliOptions;
 import org.icij.datashare.cli.Mode;
 import org.icij.datashare.text.Document;
 import org.icij.datashare.text.Hasher;
 import org.icij.datashare.text.Project;
 import org.icij.extract.cleaner.MetadataCleaner;
-import org.icij.extract.document.*;
-import org.icij.extract.extractor.EmbeddedDocumentMemoryExtractor;
-import org.icij.extract.extractor.EmbeddedDocumentMemoryExtractor.ContentNotFoundException;
+import org.icij.extract.document.DigestIdentifier;
+import org.icij.extract.document.DocumentFactory;
+import org.icij.extract.document.Identifier;
+import org.icij.extract.document.TikaDocument;
+import org.icij.extract.document.TikaDocumentSource;
+import org.icij.extract.extractor.EmbeddedDocumentExtractor;
+import org.icij.extract.extractor.EmbeddedDocumentExtractor.ContentNotFoundException;
 import org.icij.extract.extractor.UpdatableDigester;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xml.sax.SAXException;
 
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.Charset;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.icij.datashare.PropertiesProvider.DEFAULT_PROJECT_OPTION;
 
@@ -31,24 +42,14 @@ public class SourceExtractor {
     private final boolean filterMetadata;
     private final MetadataCleaner metadataCleaner = new MetadataCleaner();
 
-    public SourceExtractor() {
-        this(new PropertiesProvider(), false);
-    }
-
     public SourceExtractor(PropertiesProvider propertiesProvider) {
         this(propertiesProvider, false);
-    }
-
-    public SourceExtractor( boolean filterMetadata) {
-        this.propertiesProvider = new PropertiesProvider();
-        this.filterMetadata = filterMetadata;
     }
 
     public SourceExtractor(PropertiesProvider propertiesProvider, boolean filterMetadata) {
         this.propertiesProvider = propertiesProvider;
         this.filterMetadata = filterMetadata;
     }
-
 
     public InputStream getSource(final Document document) throws FileNotFoundException {
         return getSource(document.getProject(), document);
@@ -73,16 +74,15 @@ public class SourceExtractor {
 
     public InputStream getEmbeddedSource(final Project project, final Document document) {
         Hasher hasher = Hasher.valueOf(document.getId().length());
-        String algorithm = hasher.toString();
         int i = 0;
         List<DigestingParser.Digester> digesters = new ArrayList<>(List.of());
+        // Digester without the project name
+        digesters.add(new CommonsDigester(20 * 1024 * 1024,  hasher.toStringWithoutDash()));
         // Digester with the project name
-        digesters.add(new CommonsDigester(20 * 1024 * 1024,  algorithm.replace("-", "")));
-        // Digester with the project name
-        digesters.add(new UpdatableDigester(project.getId(), algorithm));
+        digesters.add(new UpdatableDigester(project.getId(), hasher.toString()));
         // Digester with the project name set on "defaultProject" for retro-compatibility
         if (mightUseLegacyDigester(document)) {
-            digesters.add(new UpdatableDigester(getDefaultProject(), algorithm));
+            digesters.add(new UpdatableDigester(getDefaultProject(), hasher.toString()));
         }
 
         // Try each digester to find embedded doc and ensure we 
@@ -90,27 +90,47 @@ public class SourceExtractor {
         for (DigestingParser.Digester digester : digesters) {
             Identifier identifier = new DigestIdentifier(hasher.toString(), Charset.defaultCharset());
             TikaDocument rootDocument = new DocumentFactory().withIdentifier(identifier).create(document.getPath());
-            EmbeddedDocumentMemoryExtractor embeddedExtractor = new EmbeddedDocumentMemoryExtractor(digester, algorithm, false);
 
             try {
+                EmbeddedDocumentExtractor embeddedExtractor = new EmbeddedDocumentExtractor(
+                        digester, hasher.toString(),
+                        getArtifactPath(project),false);
                 TikaDocumentSource source = embeddedExtractor.extract(rootDocument, document.getId());
-                InputStream inputStream = new ByteArrayInputStream(source.content);
+                InputStream inputStream = source.get();
                 if (filterMetadata) {
                     return new ByteArrayInputStream(metadataCleaner.clean(inputStream).getContent());
                 }
                 return inputStream;
             } catch (ContentNotFoundException | SAXException | TikaException | IOException ex) {
-                LOGGER.info(String.format("Extract attempt %s/%s for embedded document failed:", ++i, digesters.size()));
-                LOGGER.info(String.format("\t├── exception: %s",  ex.getClass().getSimpleName()));
-                LOGGER.info(String.format("\t├── algorithm: %s",  algorithm));
-                LOGGER.info(String.format("\t├── digester: %s",  digester.getClass().getSimpleName()));
-                LOGGER.info(String.format("\t├── id: %s", document.getId()));
-                LOGGER.info(String.format("\t├── routing: %s",  document.getRootDocument()));
-                LOGGER.info(String.format("\t└── project: %s",  document.getProject().getName()));
+                LOGGER.debug("Extract attempt {}/{} for embedded document {}/{} failed (algorithm={}, digester={}, project={})",
+                        ++i, digesters.size(),
+                        document.getId(), document.getRootDocument(),
+                        hasher, digester.getClass().getSimpleName(),
+                        document.getProject(), ex);
             }
         }
 
         throw new ContentNotFoundException(document.getRootDocument(), document.getId());
+    }
+
+    public void extractEmbeddedSources(final Project project, Document document) throws TikaException, IOException, SAXException {
+        Hasher hasher = Hasher.valueOf(document.getId().length());
+        DigestingParser.Digester digester = noDigestProject() ?
+                new CommonsDigester(20 * 1024 * 1024,  hasher.toStringWithoutDash()):
+                new UpdatableDigester(project.getId(), hasher.toString());
+
+        Identifier identifier = new DigestIdentifier(hasher.toString(), Charset.defaultCharset());
+        TikaDocument tikaDocument = new DocumentFactory().withIdentifier(identifier).create(document.getPath());
+        EmbeddedDocumentExtractor embeddedExtractor = new EmbeddedDocumentExtractor(digester, hasher.toString(), getArtifactPath(project),false);
+        embeddedExtractor.extractAll(tikaDocument);
+    }
+
+    private Path getArtifactPath(Project project) {
+        return propertiesProvider.get(DatashareCliOptions.ARTIFACT_DIR_OPT).map(dir -> Path.of(dir).resolve(project.name)).orElse(null);
+    }
+
+    private boolean noDigestProject() {
+        return Boolean.parseBoolean(propertiesProvider.get(DatashareCliOptions.NO_DIGEST_PROJECT_OPT).orElse("true"));
     }
 
     private boolean mightUseLegacyDigester(Document document) {
@@ -124,6 +144,4 @@ public class SourceExtractor {
     private boolean isServerMode() {
         return propertiesProvider.get("mode").orElse(Mode.SERVER.name()).equals((Mode.SERVER.name()));
     }
-
-
 }

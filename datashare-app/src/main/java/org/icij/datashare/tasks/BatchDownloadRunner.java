@@ -11,6 +11,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.icij.datashare.Entity;
 import org.icij.datashare.HumanReadableSize;
 import org.icij.datashare.PropertiesProvider;
+import org.icij.datashare.asynctasks.Task;
+import org.icij.datashare.asynctasks.bus.amqp.UriResult;
 import org.icij.datashare.batch.BatchDownload;
 import org.icij.datashare.com.mail.Mail;
 import org.icij.datashare.com.mail.MailException;
@@ -24,7 +26,7 @@ import org.icij.datashare.text.indexing.elasticsearch.SourceExtractor;
 import org.icij.datashare.user.User;
 import org.icij.datashare.user.UserTask;
 import org.icij.datashare.utils.DocumentVerifier;
-import org.icij.extract.extractor.EmbeddedDocumentMemoryExtractor.ContentNotFoundException;
+import org.icij.extract.extractor.EmbeddedDocumentExtractor.ContentNotFoundException;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,7 +39,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.zip.ZipException;
 
@@ -52,22 +53,22 @@ public class BatchDownloadRunner implements Callable<UriResult>, Monitorable, Us
     static final int MAX_SCROLL_SIZE = 3500;
     static final int MAX_BATCH_RESULT_SIZE = 10000;
     private final DocumentVerifier documentVerifier;
-    private final TaskView<File> task;
+    private final Task<File> task;
     volatile long docsToProcessSize = 0;
     private final AtomicInteger numberOfResults = new AtomicInteger(0);
     private final Indexer indexer;
     private final PropertiesProvider propertiesProvider;
-    private final BiFunction<String, Double, Void> progressCallback;
+    private final Function<Double, Void> progressCallback;
     private final Function<URI, MailSender> mailSenderSupplier;
 
     @Inject
-    public BatchDownloadRunner(Indexer indexer, PropertiesProvider propertiesProvider, @Assisted TaskView<?> task, @Assisted BiFunction<String, Double, Void> progressCallback) {
+    public BatchDownloadRunner(Indexer indexer, PropertiesProvider propertiesProvider, @Assisted Task<?> task, @Assisted Function<Double, Void> progressCallback) {
         this(indexer, propertiesProvider, progressCallback, task, MailSender::new);
     }
 
-    BatchDownloadRunner(Indexer indexer, PropertiesProvider provider, BiFunction<String, Double, Void> progressCallback, TaskView<?> task, Function<URI, MailSender> mailSenderSupplier) {
-        assert task.properties.get("batchDownload") != null : "'batchDownload' property in task shouldn't be null";
-        this.task = (TaskView<File>) task;
+    BatchDownloadRunner(Indexer indexer, PropertiesProvider provider, Function<Double, Void> progressCallback, Task<?> task, Function<URI, MailSender> mailSenderSupplier) {
+        assert task.args.get("batchDownload") != null : "'batchDownload' property in task shouldn't be null";
+        this.task = (Task<File>) task;
         this.indexer = indexer;
         this.propertiesProvider = provider;
         this.progressCallback = progressCallback;
@@ -105,6 +106,7 @@ public class BatchDownloadRunner implements Callable<UriResult>, Monitorable, Us
                         maxResultSize, batchDownload.uuid, batchDownload.user);
             }
 
+            logger.info("creating zip file with max input files size of {} bytes", maxZipSizeBytes);
             try (Zipper zipper = createZipper(batchDownload, propertiesProvider, mailSenderSupplier)) {
                 HashMap<String, Object> taskProperties = new HashMap<>();
                 taskProperties.put("batchDownload", batchDownload);
@@ -115,7 +117,7 @@ public class BatchDownloadRunner implements Callable<UriResult>, Monitorable, Us
                         if (addedBytes > 0) {
                             zippedFilesSize += addedBytes;
                             numberOfResults.incrementAndGet();
-                            progressCallback.apply(task.id, getProgressRate());
+                            progressCallback.apply(getProgressRate());
                         }
                     }
                     docsToProcess = searcher.scroll(scrollDuration).collect(toList());
@@ -155,7 +157,7 @@ public class BatchDownloadRunner implements Callable<UriResult>, Monitorable, Us
     }
 
     private BatchDownload getBatchDownload() {
-        return (BatchDownload) task.properties.get("batchDownload");
+        return (BatchDownload) task.args.get("batchDownload");
     }
     private static class Zipper implements AutoCloseable {
 

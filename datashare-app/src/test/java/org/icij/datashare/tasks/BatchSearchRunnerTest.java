@@ -1,6 +1,7 @@
 package org.icij.datashare.tasks;
 
 import org.icij.datashare.PropertiesProvider;
+import org.icij.datashare.asynctasks.Task;
 import org.icij.datashare.batch.BatchSearch;
 import org.icij.datashare.batch.BatchSearchRepository;
 import org.icij.datashare.batch.SearchException;
@@ -19,7 +20,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.stream.IntStream;
 
 import static java.util.Collections.singletonList;
@@ -44,10 +45,16 @@ import static org.mockito.MockitoAnnotations.initMocks;
 public class BatchSearchRunnerTest {
     @Mock Indexer indexer;
     MockSearch<Indexer.QueryBuilderSearcher> mockSearch;
-    @Mock BiFunction<String, Double, Void> progressCb;
+    @Mock Function<Double, Void> progressCb;
     @Mock BatchSearchRepository repository;
     @Rule public DatashareTimeRule timeRule = new DatashareTimeRule("2020-05-25T10:11:12Z");
     private final ExecutorService executor = Executors.newFixedThreadPool(1);
+
+    @Test
+    public void test_run_null_batch_search() throws Exception {
+        BatchSearch search = new BatchSearch("uuid", singletonList(project("test-datashare")), "name1", "desc1", asSet("query1", "query2"), new Date(), BatchSearch.State.QUEUED, local());
+        assertThat(new BatchSearchRunner(indexer, new PropertiesProvider(), repository, taskView(search), progressCb).call()).isEqualTo(0);
+    }
 
     @Test
     public void test_run_batch_search() throws Exception {
@@ -58,11 +65,11 @@ public class BatchSearchRunnerTest {
 
         assertThat(new BatchSearchRunner(indexer, new PropertiesProvider(), repository, taskView(search), progressCb).call()).isEqualTo(2);
 
-        verify(progressCb).apply("uuid1", 1.0);
+        verify(progressCb).apply( 1.0);
     }
 
-    private TaskView<?> taskView(BatchSearch search) {
-        return new TaskView<>(search.uuid, BatchSearchRunner.class.getName(), local());
+    private Task<?> taskView(BatchSearch search) {
+        return new Task<>(search.uuid, BatchSearchRunner.class.getName(), local());
     }
 
     @Test(expected = RuntimeException.class)
@@ -70,7 +77,7 @@ public class BatchSearchRunnerTest {
         Document[] documents = {createDoc("doc").build()};
         mockSearch.willReturn(1, documents);
         BatchSearch batchSearch = new BatchSearch("uuid1", singletonList(project("test-datashare")), "name1", "desc1", asSet("query1", "query2"), new Date(), BatchSearch.State.QUEUED, local());
-
+        when(repository.get(local(), batchSearch.uuid)).thenReturn(batchSearch);
         when(repository.saveResults(anyString(), any(), anyList())).thenThrow(new RuntimeException());
 
         new BatchSearchRunner(indexer, new PropertiesProvider(), repository, taskView(batchSearch), progressCb).call();
@@ -128,7 +135,7 @@ public class BatchSearchRunnerTest {
         executor.submit(batchSearchRunner);
         executor.shutdown();
         countDownLatch.await();
-        batchSearchRunner.cancel(null, false);
+        batchSearchRunner.cancel(false);
 
         assertThat(executor.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
     }

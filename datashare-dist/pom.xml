@@ -7,7 +7,7 @@
     <parent>
         <artifactId>datashare</artifactId>
         <groupId>org.icij.datashare</groupId>
-        <version>15.1.9</version>
+        <version>18.2.1</version>
     </parent>
 
     <artifactId>datashare-dist</artifactId>
@@ -49,16 +49,34 @@
         </dependency>
         <dependency>
             <groupId>org.icij.datashare</groupId>
+            <artifactId>datashare-tasks</artifactId>
+            <version>${datashare-tasks.version}</version>
+            <type>jar</type>
+            <classifier>jar-with-dependencies</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.icij.datashare</groupId>
             <artifactId>datashare-app</artifactId>
             <version>${project.version}</version>
             <type>jar</type>
             <classifier>jar-with-dependencies</classifier>
             <scope>runtime</scope>
         </dependency>
+        <dependency>
+            <groupId>com.mattbertolini</groupId>
+            <artifactId>liquibase-slf4j</artifactId>
+            <version>5.0.0</version>
+            <scope>runtime</scope>
+        </dependency>
     </dependencies>
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>io.github.git-commit-id</groupId>
+                <artifactId>git-commit-id-maven-plugin</artifactId>
+            </plugin>
             <plugin>
                 <artifactId>maven-assembly-plugin</artifactId>
                 <executions>
@@ -75,8 +93,8 @@
                                 </manifest>
                                 <manifestEntries>
                                     <Build-Time>${maven.build.timestamp}</Build-Time>
-                                    <Implementation-Version>${version}</Implementation-Version>
-                                    <Add-Opens>java.base/java.util java.base/java.lang java.base/java.net</Add-Opens>
+                                    <Implementation-Version>${project.version}</Implementation-Version>
+                                    <Add-Opens>java.base/java.util java.base/java.util.concurrent.locks java.base/java.lang java.base/java.net</Add-Opens>
                                     <Multi-Release>true</Multi-Release>
                                 </manifestEntries>
                             </archive>

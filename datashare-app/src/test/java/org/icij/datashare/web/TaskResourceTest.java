@@ -1,10 +1,17 @@
 package org.icij.datashare.web;
 
+import java.util.Map;
+import java.util.function.Function;
 import net.codestory.http.routes.Routes;
 import net.codestory.rest.Response;
 import net.codestory.rest.RestAssert;
 import net.codestory.rest.ShouldChain;
 import org.icij.datashare.PropertiesProvider;
+import org.icij.datashare.asynctasks.Task;
+import org.icij.datashare.asynctasks.TaskManager;
+import org.icij.datashare.asynctasks.TaskModifier;
+import org.icij.datashare.asynctasks.TaskSupplier;
+import org.icij.datashare.asynctasks.bus.amqp.TaskCreation;
 import org.icij.datashare.db.JooqRepository;
 import org.icij.datashare.extension.PipelineRegistry;
 import org.icij.datashare.mode.CommonMode;
@@ -30,7 +37,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.function.BiFunction;
 
 import static java.lang.String.format;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -50,11 +56,13 @@ import static org.mockito.Mockito.when;
 import static org.mockito.MockitoAnnotations.initMocks;
 
 public class TaskResourceTest extends AbstractProdWebServerTest {
-    @Rule public DatashareTimeRule time = new DatashareTimeRule("2021-07-07T12:23:34Z");
-    @Mock JooqRepository jooqRepository;
-    private static final TaskFactoryForTest taskFactory = mock(TaskFactoryForTest.class);
-    private static final BlockingQueue<TaskView<?>> taskQueue = new ArrayBlockingQueue<>(3);
-    private static final TaskManagerMemory taskManager= new TaskManagerMemory(taskQueue, taskFactory);
+    @Rule
+    public DatashareTimeRule time = new DatashareTimeRule("2021-07-07T12:23:34Z");
+    @Mock
+    JooqRepository jooqRepository;
+    private static final DatashareTaskFactoryForTest taskFactory = mock(DatashareTaskFactoryForTest.class);
+    private static final BlockingQueue<Task<?>> taskQueue = new ArrayBlockingQueue<>(3);
+    private static final TaskManagerMemory taskManager = new TaskManagerMemory(taskQueue, taskFactory);
 
     @Before
     public void setUp() {
@@ -67,20 +75,23 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         pipelineRegistry.register(EmailPipeline.class);
         LocalUserFilter localUserFilter = new LocalUserFilter(propertiesProvider, jooqRepository);
         configure(new CommonMode(propertiesProvider.getProperties()) {
-                    @Override
-                    protected void configure() {
-                        bind(TaskFactory.class).toInstance(taskFactory);
-                        bind(Indexer.class).toInstance(mock(Indexer.class));
-                        bind(TaskManager.class).toInstance(taskManager);
-                        bind(TaskSupplier.class).toInstance(taskManager);
-                        bind(TaskModifier.class).toInstance(taskManager);
-                        bind(PipelineRegistry.class).toInstance(pipelineRegistry);
-                        bind(LocalUserFilter.class).toInstance(localUserFilter);
-                        bind(PropertiesProvider.class).toInstance(getDefaultPropertiesProvider());
-                    }
-            @Override protected Routes addModeConfiguration(Routes routes) {
-                        return routes.add(TaskResource.class).filter(LocalUserFilter.class);}
-                }.createWebConfiguration());
+            @Override
+            protected void configure() {
+                bind(DatashareTaskFactory.class).toInstance(taskFactory);
+                bind(Indexer.class).toInstance(mock(Indexer.class));
+                bind(TaskManager.class).toInstance(taskManager);
+                bind(TaskSupplier.class).toInstance(taskManager);
+                bind(TaskModifier.class).toInstance(taskManager);
+                bind(PipelineRegistry.class).toInstance(pipelineRegistry);
+                bind(LocalUserFilter.class).toInstance(localUserFilter);
+                bind(PropertiesProvider.class).toInstance(getDefaultPropertiesProvider());
+            }
+
+            @Override
+            protected Routes addModeConfiguration(Routes routes) {
+                return routes.add(TaskResource.class).filter(LocalUserFilter.class);
+            }
+        }.createWebConfiguration());
         init(taskFactory);
     }
 
@@ -96,11 +107,11 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         ShouldChain responseBody = response.should().haveType("application/json");
 
         List<String> taskNames = taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).collect(toList());
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(0)));
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(1)));
+        responseBody.should().contain(format(taskNames.get(0)));
+        responseBody.should().contain(taskNames.get(1));
 
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask")).isNotNull();
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().properties).excludes(entry("reportName", "extract:report:map"));
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().args).excludes(entry("reportName", "extract:report:map"));
 
     }
 
@@ -110,22 +121,22 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         post("/api/task/batchUpdate/index/" + getClass().getResource("/docs/doc.txt").getPath().substring(1), body).should().haveType("application/json");
 
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask")).isNotNull();
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().properties).excludes(entry("reportName", "foo"));
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().args).excludes(entry("reportName", "foo"));
     }
 
     @Test
     public void test_index_file_and_filter() {
-        String body ="{\"options\":{\"filter\": true}}";
+        String body = "{\"options\":{\"filter\": true}}";
         RestAssert response = post("/api/task/batchUpdate/index/" + getClass().getResource("/docs/doc.txt").getPath().substring(1), body);
 
         ShouldChain responseBody = response.should().haveType("application/json");
 
-        List<String> taskNames = taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).collect(toList());
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(0)));
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(1)));
+        List<String> taskNames = taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).toList();
+        responseBody.should().contain(taskNames.get(0));
+        responseBody.should().contain(taskNames.get(1));
 
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask")).isNotNull();
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().properties).includes(entry("reportName", "extract:report:local-datashare"));
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().args).includes(entry("reportName", "extract:report:local-datashare"));
     }
 
     @Test
@@ -135,12 +146,12 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
 
         ShouldChain responseBody = response.should().haveType("application/json");
 
-        List<String> taskNames = taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).collect(toList());
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(0)));
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(1)));
+        List<String> taskNames = taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).toList();
+        responseBody.should().contain(taskNames.get(0));
+        responseBody.should().contain(taskNames.get(1));
 
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask")).isNotNull();
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().properties).includes(entry("reportName", "extract:report:foo"));
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().args).includes(entry("reportName", "extract:report:foo"));
     }
 
     @Test
@@ -151,8 +162,8 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         ShouldChain responseBody = response.should().haveType("application/json");
 
         List<String> taskNames = taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).collect(toList());
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(0)));
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(1)));
+        responseBody.should().contain(taskNames.get(0));
+        responseBody.should().contain(taskNames.get(1));
     }
 
     @Test
@@ -162,18 +173,18 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         ShouldChain responseBody = response.should().haveType("application/json");
 
         List<String> taskNames = taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).collect(toList());
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(0)));
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(1)));
+        responseBody.should().contain(taskNames.get(0));
+        responseBody.should().contain(taskNames.get(1));
     }
 
     @Test(timeout = 2000)
     public void test_index_and_scan_default_directory() {
         RestAssert response = post("/api/task/batchUpdate/index/file", "{}");
-        HashMap<String, Object> properties = getDefaultProperties();
+        Map<String, Object> properties = getDefaultProperties();
         properties.put("foo", "bar");
 
         response.should().respond(200).haveType("application/json");
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().properties).
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().args).
                 includes(entry("dataDir", "/default/data/dir"));
     }
 
@@ -185,17 +196,18 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
                 "{\"options\":{\"foo\":\"baz\",\"key\":\"val\"}}");
 
         response.should().haveType("application/json");
-        HashMap<String, Object> defaultProperties = getDefaultProperties();
+        Map<String, Object> defaultProperties = getDefaultProperties();
         defaultProperties.put("foo", "baz");
         defaultProperties.put("key", "val");
+        defaultProperties.put("user", User.local());
         defaultProperties.remove(REPORT_NAME_OPT);
 
         assertThat(taskManager.getTasks()).hasSize(2);
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask")).isNotNull();
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().properties.get(DATA_DIR_OPT)).isEqualTo(path);
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().args.get(DATA_DIR_OPT)).isEqualTo(path);
 
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask")).isNotNull();
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().properties).isEqualTo(defaultProperties);
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask").get().args).isEqualTo(defaultProperties);
     }
 
     @Test
@@ -204,13 +216,14 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         RestAssert response = post("/api/task/batchUpdate/index", body);
         response.should().haveType("application/json");
 
-        HashMap<String, Object> defaultProperties = getDefaultProperties();
+        Map<String, Object> defaultProperties = getDefaultProperties();
         defaultProperties.put("key1", "val1");
         defaultProperties.put("key2", "val2");
+        defaultProperties.put("user", User.local());
 
         assertThat(taskManager.getTasks()).hasSize(1);
         assertThat(taskManager.getTasks().get(0).name).isEqualTo("org.icij.datashare.tasks.IndexTask");
-        assertThat(taskManager.getTasks().get(0).properties).isEqualTo(defaultProperties);
+        assertThat(taskManager.getTasks().get(0).args).isEqualTo(defaultProperties);
     }
 
     @Test
@@ -223,11 +236,11 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
 
         List<String> taskNames = taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).collect(toList());
         assertThat(taskNames.size()).isEqualTo(1);
-        responseBody.should().contain(format("{\"id\":\"%s\"", taskNames.get(0)));
-        HashMap<String, Object> defaultProperties = getDefaultProperties();
+        responseBody.should().contain(taskNames.get(0));
+        Map<String, Object> defaultProperties = getDefaultProperties();
         defaultProperties.put("key", "val");
         defaultProperties.put("foo", "qux");
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().properties).
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().args).
                 includes(entry("key", "val"), entry("foo", "qux"), entry(DATA_DIR_OPT, path));
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.IndexTask")).isNotNull();
     }
@@ -240,7 +253,7 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         response.should().haveType("application/json");
         taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).collect(toList());
 
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().properties).
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().args).
                 includes(entry("queueName", "extract:queue:foo:1725215461"));
     }
 
@@ -252,7 +265,7 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         response.should().haveType("application/json");
         taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).collect(toList());
 
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().properties).
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().args).
                 includes(entry("digestProjectName", "foo"));
     }
 
@@ -264,7 +277,7 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         response.should().haveType("application/json");
         taskManager.waitTasksToBeDone(1, SECONDS).stream().map(t -> t.id).collect(toList());
 
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().properties).
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ScanTask").get().args).
                 includes(entry("queueName", "extract:queue:foo:1725215461"));
     }
 
@@ -279,7 +292,7 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
 
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.EnqueueFromIndexTask")).isNotNull();
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.ExtractNlpTask")).isNotNull();
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ExtractNlpTask").get().properties).includes(entry("nlpPipeline", "EMAIL"));
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ExtractNlpTask").get().args).includes(entry("nlpPipeline", "EMAIL"));
     }
 
     @Test
@@ -289,7 +302,7 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
 
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.EnqueueFromIndexTask")).isNotNull();
         assertThat(findTask(taskManager, "org.icij.datashare.tasks.ExtractNlpTask")).isNotNull();
-        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ExtractNlpTask").get().properties).
+        assertThat(findTask(taskManager, "org.icij.datashare.tasks.ExtractNlpTask").get().args).
                 includes(
                         entry("nlpPipeline", "EMAIL"),
                         entry("key", "val"),
@@ -318,8 +331,8 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         Response response = post("/api/task/batchDownload", "{\"options\":{ \"projectIds\":[\"test-datashare\"], \"query\": \"*\" }}").response();
 
         assertThat(response.contentType()).startsWith("application/json");
-        TaskView<?> task = MAPPER.readValue(response.content(), TaskView.class);
-        assertThat(taskQueue.contains(task));
+        TaskResource.TaskResponse taskResponse = MAPPER.readValue(response.content(), TaskResource.TaskResponse.class);
+        assertThat(taskManager.getTask(taskResponse.taskId())).isNotNull();
     }
 
     @Test
@@ -327,27 +340,26 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         Response response = post("/api/task/batchDownload", "{\"options\":{ \"projectIds\":[\"project1\", \"project2\"], \"query\": \"*\" }}").response();
 
         assertThat(response.contentType()).startsWith("application/json");
-        TaskView<?> task = MAPPER.readValue(response.content(), TaskView.class);
-        assertThat(taskQueue.contains(task));
+        TaskResource.TaskResponse taskResponse = MAPPER.readValue(response.content(), TaskResource.TaskResponse.class);
+        assertThat(taskManager.getTask(taskResponse.taskId())).isNotNull();
     }
 
     @Test
-    public void test_batch_download_uri() throws Exception  {
+    public void test_batch_download_uri() throws Exception {
         Response response = post("/api/task/batchDownload", "{\"options\":{ \"projectIds\":[\"test-datashare\"], \"query\": \"*\", \"uri\": \"/an%20url-encoded%20uri\" }}").response();
 
         assertThat(response.contentType()).startsWith("application/json");
-        TaskView<?> task = MAPPER.readValue(response.content(), TaskView.class);
-        assertThat(taskQueue.contains(task));
+        TaskResource.TaskResponse taskResponse = MAPPER.readValue(response.content(), TaskResource.TaskResponse.class);
+        assertThat(taskManager.getTask(taskResponse.taskId())).isNotNull();
     }
-
 
     @Test
     public void test_batch_download_json_query()  throws Exception {
         Response response = post("/api/task/batchDownload", "{\"options\":{ \"projectIds\":[\"test-datashare\"], \"query\": {\"match_all\":{}} }}").response();
 
         assertThat(response.contentType()).startsWith("application/json");
-        TaskView<?> task = MAPPER.readValue(response.content(), TaskView.class);
-        assertThat(taskQueue.contains(task));
+        TaskResource.TaskResponse taskResponse = MAPPER.readValue(response.content(), TaskResource.TaskResponse.class);
+        assertThat(taskManager.getTask(taskResponse.taskId())).isNotNull();
     }
 
     @Test
@@ -364,12 +376,12 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
 
     @Test
     public void test_clean_one_done_task() throws IOException {
-        TaskView<String> dummyTask = taskManager.startTask(TestTask.class.getName(), User.local(), new HashMap<>());
+        String dummyTaskId = taskManager.startTask(TestTask.class.getName(), User.local(), new HashMap<>());
         taskManager.waitTasksToBeDone(1, SECONDS);
         assertThat(taskManager.getTasks()).hasSize(1);
-        assertThat(taskManager.getTask(dummyTask.id).getState()).isEqualTo(TaskView.State.DONE);
+        assertThat(taskManager.getTask(dummyTaskId).getState()).isEqualTo(Task.State.DONE);
 
-        delete("/api/task/clean/" + dummyTask.id).should().respond(200);
+        delete("/api/task/clean/" + dummyTaskId).should().respond(200);
 
         assertThat(taskManager.getTasks()).hasSize(0);
     }
@@ -380,16 +392,16 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
 
     @Test
     public void test_clean_task_preflight() throws IOException {
-        TaskView<String> dummyTask = taskManager.startTask(TestTask.class.getName(), User.local(), new HashMap<>());
+        String dummyTaskId = taskManager.startTask(TestTask.class.getName(), User.local(), new HashMap<>());
         taskManager.waitTasksToBeDone(1, SECONDS);
-        options("/api/task/clean/" + dummyTask.id).should().respond(200);
+        options("/api/task/clean/" + dummyTaskId).should().respond(200);
     }
 
     @Test
     public void test_cannot_clean_running_task() throws IOException {
-        TaskView<String> dummyTask = taskManager.startTask(TestSleepingTask.class.getName(), User.local(), new HashMap<>());
-        assertThat(taskManager.getTask(dummyTask.id).getState()).isNotEqualTo(TaskView.State.DONE);
-        delete("/api/task/clean/" + dummyTask.id).should().respond(403);
+        String dummyTaskId = taskManager.startTask(TestSleepingTask.class.getName(), User.local(), new HashMap<>());
+        assertThat(taskManager.getTask(dummyTaskId).getState()).isNotEqualTo(Task.State.DONE);
+        delete("/api/task/clean/" + dummyTaskId).should().respond(403);
         assertThat(taskManager.getTasks()).hasSize(1);
         // Cancel the all tasks to avoid side-effects with other tests
         put("/api/task/stopAll").should().respond(200);
@@ -397,10 +409,10 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
 
     @Test
     public void test_stop_task() throws IOException {
-        TaskView<String> dummyTask = taskManager.startTask(TestSleepingTask.class.getName(), User.local(), new HashMap<>());
-        put("/api/task/stop/" + dummyTask.id).should().respond(200).contain("true");
+        String dummyTaskId = taskManager.startTask(TestSleepingTask.class.getName(), User.local(), new HashMap<>());
+        put("/api/task/stop/" + dummyTaskId).should().respond(200).contain("true");
 
-        assertThat(taskManager.getTask(dummyTask.id).getState()).isEqualTo(TaskView.State.CANCELLED);
+        assertThat(taskManager.getTask(dummyTaskId).getState()).isEqualTo(Task.State.CANCELLED);
         get("/api/task/all").should().respond(200).contain("\"state\":\"CANCELLED\"");
     }
 
@@ -411,19 +423,19 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
 
     @Test
     public void test_stop_all() throws IOException {
-        TaskView<String> t1 = taskManager.startTask(TestSleepingTask.class.getName(), User.local(), new HashMap<>());
-        TaskView<String> t2 = taskManager.startTask(TestSleepingTask.class.getName(), User.local(), new HashMap<>());
+        String t1Id = taskManager.startTask(TestSleepingTask.class.getName(), User.local(), new HashMap<>());
+        String t2Id = taskManager.startTask(TestSleepingTask.class.getName(), User.local(), new HashMap<>());
         put("/api/task/stopAll").should().respond(200).
-                contain(t1.id + "\":true").
-                contain(t2.id + "\":true");
+                contain(t1Id + "\":true").
+                contain(t2Id + "\":true");
 
-        assertThat(taskManager.getTask(t1.id).getState()).isEqualTo(TaskView.State.CANCELLED);
-        assertThat(taskManager.getTask(t2.id).getState()).isEqualTo(TaskView.State.CANCELLED);
+        assertThat(taskManager.getTask(t1Id).getState()).isEqualTo(Task.State.CANCELLED);
+        assertThat(taskManager.getTask(t2Id).getState()).isEqualTo(Task.State.CANCELLED);
     }
 
     @Test
     public void test_stop_all_filters_running_tasks() throws IOException {
-        TaskView<String> dummyTask = taskManager.startTask(TestTask.class.getName(), User.local(), new HashMap<>());
+        taskManager.startTask(TestTask.class.getName(), User.local(), new HashMap<>());
         taskManager.waitTasksToBeDone(1, SECONDS);
 
         put("/api/task/stopAll").should().respond(200).contain("{}");
@@ -431,7 +443,7 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
 
     @Test
     public void test_clear_done_tasks() throws IOException {
-        TaskView<String> dummyTask = taskManager.startTask(TestTask.class.getName(), User.local(), new HashMap<>());
+        taskManager.startTask(TestTask.class.getName(), User.local(), new HashMap<>());
         taskManager.waitTasksToBeDone(1, SECONDS);
 
         put("/api/task/stopAll").should().respond(200).contain("{}");
@@ -440,8 +452,37 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         assertThat(taskManager.getTasks()).hasSize(0);
     }
 
+    @Test
+    public void test_create_new_task_not_same_id_for_url_and_json() {
+        put("/api/task/my_url_task_id", """
+            {"@type":"Task","id":"my_json_task_id","name":"name",
+            "arguments": {"user":{"@type":"org.icij.datashare.user.User", "id":"local","name":null,"email":null,"provider":"local","details":{"uid":"local","groups_by_applications":{"datashare":["local-datashare"]}}
+            }}}""")
+                .should().respond(400)
+                .should().haveType("application/json")
+                .should().contain("{\"message\":");
+    }
+
+    @Test
+    public void test_create_new_task_with_empty_json() {
+        put("/api/task/my_url_task_id", """
+                {"@type":"Task"}""")
+                .should().respond(400)
+                .should().haveType("application/json")
+                .should().contain("{\"message\":");
+    }
+
+    @Test
+    public void test_create_new_task() {
+        put("/api/task/my_json_task_id", String.format("""
+            {"@type":"Task","id":"my_json_task_id","name":"%s",
+            "arguments": {"user":{"@type":"org.icij.datashare.user.User", "id":"local","name":null,"email":null,"provider":"local","details":{"uid":"local","groups_by_applications":{"datashare":["local-datashare"]}}
+            }}}""", TaskCreation.class.getName()))
+                .should().respond(201);
+    }
+
     @NotNull
-    private HashMap<String, Object> getDefaultProperties() {
+    private Map<String, Object> getDefaultProperties() {
         HashMap<String, Object> map = new HashMap<>() {{
             put("dataDir", "/default/data/dir");
             put("foo", "bar");
@@ -461,11 +502,11 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         return new PropertiesProvider(getDefaultProperties());
     }
 
-    private Optional<TaskView<?>> findTask(TaskManagerMemory taskManager, String expectedName) {
+    private Optional<Task<?>> findTask(TaskManagerMemory taskManager, String expectedName) {
         return taskManager.getTasks().stream().filter(t -> expectedName.equals(t.name)).findFirst();
     }
 
-    private void init(TaskFactoryForTest taskFactory) {
+    private void init(DatashareTaskFactoryForTest taskFactory) {
         reset(taskFactory);
         when(taskFactory.createIndexTask(any(), any())).thenReturn(mock(IndexTask.class));
         when(taskFactory.createScanTask(any(), any())).thenReturn(mock(ScanTask.class));
@@ -474,12 +515,14 @@ public class TaskResourceTest extends AbstractProdWebServerTest {
         when(taskFactory.createScanIndexTask(any(), any())).thenReturn(mock(ScanIndexTask.class));
         when(taskFactory.createEnqueueFromIndexTask(any(), any())).thenReturn(mock(EnqueueFromIndexTask.class));
         when(taskFactory.createExtractNlpTask(any(), any())).thenReturn(mock(ExtractNlpTask.class));
-        when(taskFactory.createTestTask(any(), any())).thenReturn(new TestTask(10));
-        when(taskFactory.createTestSleepingTask(any(), any())).thenReturn(new TestSleepingTask(10000));
+        when(taskFactory.createTestTask(any(Task.class), any(Function.class))).thenReturn(new TestTask(10));
+        when(taskFactory.createTestSleepingTask(any(Task.class), any(Function.class))).thenReturn(new TestSleepingTask(100000));
+        when(taskFactory.createTaskCreation(any(Task.class), any(Function.class))).thenReturn(mock(TaskCreation.class));
     }
 
-    public interface TaskFactoryForTest extends TaskFactory {
-        TestSleepingTask createTestSleepingTask(TaskView<Integer> taskView, BiFunction<String, Integer, Void> updateCallback);
-        TestTask createTestTask(TaskView<Integer> taskView, BiFunction<String, Integer, Void> updateCallback);
+    public interface DatashareTaskFactoryForTest extends DatashareTaskFactory {
+        TestSleepingTask createTestSleepingTask(Task<Integer> task, Function<Double, Void> updateCallback);
+        TestTask createTestTask(Task<Integer> task, Function<Double, Void> updateCallback);
+        TaskCreation createTaskCreation(Task<?> task, Function<Double, Void> updateCallback);
     }
 }

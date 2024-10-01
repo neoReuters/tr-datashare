@@ -1,18 +1,19 @@
 package org.icij.datashare;
 
 import com.google.inject.ConfigurationException;
+import org.icij.datashare.asynctasks.Task;
 import org.icij.datashare.cli.CliExtensionService;
 import org.icij.datashare.cli.spi.CliExtension;
 import org.icij.datashare.mode.CommonMode;
+import org.icij.datashare.tasks.ArtifactTask;
 import org.icij.datashare.tasks.DeduplicateTask;
 import org.icij.datashare.tasks.EnqueueFromIndexTask;
 import org.icij.datashare.tasks.ExtractNlpTask;
 import org.icij.datashare.tasks.IndexTask;
 import org.icij.datashare.tasks.ScanIndexTask;
 import org.icij.datashare.tasks.ScanTask;
-import org.icij.datashare.tasks.TaskFactory;
+import org.icij.datashare.tasks.DatashareTaskFactory;
 import org.icij.datashare.tasks.TaskManagerMemory;
-import org.icij.datashare.tasks.TaskView;
 import org.icij.datashare.text.indexing.Indexer;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
@@ -49,7 +50,7 @@ class CliApp {
             extension.run(properties);
             System.exit(0);
         }
-        runTaskRunner(commonMode, properties);
+        runTaskWorker(commonMode, properties);
     }
 
     private static void process(DeliverableService<?> deliverableService, Properties properties) throws IOException {
@@ -65,9 +66,9 @@ class CliApp {
         System.exit(0);
     }
 
-    private static void runTaskRunner(CommonMode mode, Properties properties) throws Exception {
+    private static void runTaskWorker(CommonMode mode, Properties properties) throws Exception {
         TaskManagerMemory taskManager = mode.get(TaskManagerMemory.class);
-        TaskFactory taskFactory = mode.get(TaskFactory.class);
+        DatashareTaskFactory taskFactory = mode.get(DatashareTaskFactory.class);
         Indexer indexer = mode.get(Indexer.class);
         RedissonClient redissonClient;
         try {
@@ -107,42 +108,49 @@ class CliApp {
         }
 
         PipelineHelper pipeline = new PipelineHelper(new PropertiesProvider(properties));
+        logger.info("executing {}", pipeline);
         if (pipeline.has(Stage.DEDUPLICATE)) {
             Long result = taskFactory.createDeduplicateTask(
-                    new TaskView<>(DeduplicateTask.class.getName(), nullUser(), propertiesToMap(properties)),
-                    (s, percentage) -> {logger.info("percentage: {}% done", percentage);return null;}).call();
+                    new Task<>(DeduplicateTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (percentage) -> {logger.info("percentage: {}% done", percentage);return null;}).call();
             logger.info("removed {} duplicates", result);
         }
 
         if (pipeline.has(Stage.SCANIDX)) {
             Long result = taskFactory.createScanIndexTask(
-                    new TaskView<>(ScanIndexTask.class.getName(), nullUser(), propertiesToMap(properties)),
-                    (s, percentage) -> {logger.info("percentage: {}% done", percentage);return null;}).call();
+                    new Task<>(ScanIndexTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (percentage) -> {logger.info("percentage: {}% done", percentage);return null;}).call();
             logger.info("scanned {}", result);
         }
 
         if (pipeline.has(Stage.SCAN)) {
             taskFactory.createScanTask(
-                    new TaskView<>(ScanTask.class.getName(), nullUser(), propertiesToMap(properties)),
-                    (s, percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
+                    new Task<>(ScanTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
         }
 
         if (pipeline.has(Stage.INDEX)) {
             taskFactory.createIndexTask(
-                    new TaskView<>(IndexTask.class.getName(), nullUser(), propertiesToMap(properties)),
-                    (s, percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
+                    new Task<>(IndexTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
         }
 
         if (pipeline.has(Stage.ENQUEUEIDX)) {
             taskFactory.createEnqueueFromIndexTask(
-                    new TaskView<>(EnqueueFromIndexTask.class.getName(), nullUser(), propertiesToMap(properties)),
-                    (s, percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
+                    new Task<>(EnqueueFromIndexTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
         }
 
         if (pipeline.has(Stage.NLP)) {
             taskFactory.createExtractNlpTask(
-                    new TaskView<>(ExtractNlpTask.class.getName(), nullUser(), propertiesToMap(properties)),
-                    (s, percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
+                    new Task<>(ExtractNlpTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
+        }
+
+        if (pipeline.has(Stage.ARTIFACT)) {
+            taskFactory.createArtifactTask(
+                    new Task<>(ArtifactTask.class.getName(), nullUser(), propertiesToMap(properties)),
+                    (percentage) -> {logger.info("percentage: {}% done", percentage); return null;}).call();
         }
         taskManager.shutdownAndAwaitTermination(Integer.MAX_VALUE, SECONDS);
         indexer.close();

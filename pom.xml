@@ -5,8 +5,19 @@
 
     <groupId>org.icij.datashare</groupId>
     <artifactId>datashare</artifactId>
-    <version>15.1.9</version>
+    <version>18.2.1</version>
     <packaging>pom</packaging>
+
+    <name>ICIJ Datashare</name>
+    <url>https://datashare.icij.org</url>
+
+    <licenses>
+        <license>
+            <name>GNU Affero General Public License v3.0</name>
+            <url>https://www.gnu.org/licenses/agpl-3.0.en.html</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <inceptionYear>2016</inceptionYear>
     <description>ICIJ Datashare - Better analyze information, in all its forms</description>
@@ -18,26 +29,17 @@
 
     <developers>
         <developer>
-            <name>Bruno Thomas</name>
-            <email>bthomas@icij.org</email>
-            <organization>ICIJ</organization>
-        </developer>
-        <developer>
-            <name>Julien Martin</name>
-            <id>julm</id>
-            <email>julien.pierre.martin@gmail.com</email>
-            <organization>ICIJ</organization>
-        </developer>
-        <developer>
-            <name>Maxime Vanza Lutonda</name>
-            <email>mvanza@icij.org</email>
+            <name>ICIJ</name>
+            <email>datashare@icij.org</email>
             <organization>ICIJ</organization>
         </developer>
     </developers>
 
     <modules>
         <module>commons-test</module>
+        <module>datashare-api</module>
         <module>datashare-db</module>
+        <module>datashare-tasks</module>
         <module>datashare-cli</module>
         <module>datashare-index</module>
         <module>datashare-nlp-corenlp</module>
@@ -73,25 +75,28 @@
         <maven.test.redirectTestOutputToFile>true</maven.test.redirectTestOutputToFile>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
 
-        <datashare-api.version>13.8.0</datashare-api.version>
+        <datashare-api.version>14.2.0</datashare-api.version>
         <datashare-cli.version>13.5.0</datashare-cli.version>
+        <datashare-tasks.version>15.2.0</datashare-tasks.version>
 
         <datashare-mitie.version>${project.version}</datashare-mitie.version>
         <datashare-elasticsearch.version>${project.version}</datashare-elasticsearch.version>
         <datashare-corenlp.version>${project.version}</datashare-corenlp.version>
         <guice.version>4.2.3</guice.version>
-        <amazon.version>1.11.327</amazon.version>
+        <amazon.version>1.12.411</amazon.version>
 
-        <extract.version>6.7.1</extract.version>
+        <extract.version>7.3.0</extract.version>
         <opennlp.version>1.6.0</opennlp.version>
         <elasticsearch.version>7.17.9</elasticsearch.version>
         <lucene.version>8.11.1</lucene.version>
         <unidecode.version>0.0.7</unidecode.version>
         <joda-time.version>2.9.5</joda-time.version>
         <httpclient.version>4.5.13</httpclient.version>
+        <redisson.version>3.20.1</redisson.version>
+        <jackson.version>2.15.1</jackson.version>
         <httpcore.version>4.4.13</httpcore.version>
         <guava.version>33.0.0-jre</guava.version>
         <xalan.version>2.7.2</xalan.version>
@@ -106,21 +111,23 @@
         <log4jtoslf4j.version>2.17.2</log4jtoslf4j.version>
         <log4-over-slf4j.version>2.17.2</log4-over-slf4j.version>
         <junit.version>4.13.2</junit.version>
+        <fest-assert.version>1.4</fest-assert.version>
+        <mockito.version>5.10.0</mockito.version>
 
         <!-- Maven Plugins -->
         <maven-compiler.version>3.5.1</maven-compiler.version>
-        <maven-surefire.version>3.0.0-M3</maven-surefire.version>
+        <maven-surefire.version>3.3.0</maven-surefire.version>
         <maven-jar.version>3.0.2</maven-jar.version>
-        <maven-assembly.version>2.6</maven-assembly.version>
+        <maven-assembly.version>3.7.1</maven-assembly.version>
         <maven-resources-plugin>3.0.2</maven-resources-plugin>
-        <maven-shade.version>3.2.4</maven-shade.version>
-        <maven-dependency.version>2.10</maven-dependency.version>
+        <maven-shade.version>3.5.3</maven-shade.version>
+        <maven-dependency.version>3.6.1</maven-dependency.version>
         <maven-build-helper.version>1.10</maven-build-helper.version>
         <maven-install.version>2.5.2</maven-install.version>
         <maven-release.version>2.5.3</maven-release.version>
         <maven-exec.version>1.5.0</maven-exec.version>
         <maven-javadoc.version>2.10.4</maven-javadoc.version>
-        <git-commit-id.version>2.2.4</git-commit-id.version>
+        <git-commit-id-maven-plugin.version>9.0.0</git-commit-id-maven-plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -138,9 +145,21 @@
             </dependency>
             <dependency>
                 <groupId>org.icij.datashare</groupId>
+                <artifactId>datashare-tasks</artifactId>
+                <version>${datashare-tasks.version}</version>
+                <scope>runtime</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.icij.datashare</groupId>
                 <artifactId>datashare-db</artifactId>
                 <version>${project.version}</version>
                 <scope>runtime</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.icij.datashare</groupId>
+                <artifactId>commons-test</artifactId>
+                <version>${project.version}</version>
+                <scope>test</scope>
             </dependency>
             <dependency>
                 <groupId>net.sf.jopt-simple</groupId>
@@ -300,11 +319,23 @@
             </dependency>
 
 
-            <!-- JUnit -->
+            <!-- tests -->
             <dependency>
                 <groupId>junit</groupId>
                 <artifactId>junit</artifactId>
                 <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.easytesting</groupId>
+                <artifactId>fest-assert</artifactId>
+                <version>${fest-assert.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${mockito.version}</version>
                 <scope>test</scope>
             </dependency>
 
@@ -320,9 +351,7 @@
 
     <build>
         <pluginManagement>
-
             <plugins>
-
                 <!-- Compile -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -333,6 +362,13 @@
                         <compilerArgument>-parameters</compilerArgument>
                         <showDeprecation>true</showDeprecation>
                     </configuration>
+                </plugin>
+
+                <!-- Tests -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven-surefire.version}</version>
                 </plugin>
 
                 <!-- Jar -->
@@ -370,10 +406,30 @@
                                             <exclude>META-INF/*.SF</exclude>
                                             <exclude>META-INF/*.DSA</exclude>
                                             <exclude>META-INF/*.RSA</exclude>
+                                            <exclude>META-INF/services/liquibase.logging.LogService</exclude>
                                         </excludes>
                                     </filter>
                                 </filters>
                             </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+
+                <plugin>
+                    <artifactId>maven-assembly-plugin</artifactId>
+                    <version>${maven-assembly.version}</version>
+                    <configuration>
+                        <descriptorRefs>
+                            <descriptorRef>jar-with-dependencies</descriptorRef>
+                        </descriptorRefs>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>make-assembly</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>single</goal>
+                            </goals>
                         </execution>
                     </executions>
                 </plugin>
@@ -407,6 +463,43 @@
                     </executions>
                 </plugin>
 
+                <!-- Source plugin -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-source-plugin</artifactId>
+                    <version>2.2.1</version>
+                    <executions>
+                        <execution>
+                            <id>attach-sources</id>
+                            <goals>
+                                <goal>jar-no-fork</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+
+                <!-- Javadoc plugin -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>${maven-javadoc.version}</version>
+                    <configuration>
+                        <show>private</show>
+                        <nohelp>true</nohelp>
+                        <aggregate>true</aggregate>
+                        <reportOutputDirectory>${project.basedir}</reportOutputDirectory>
+                        <destDir>doc</destDir>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>attach-javadocs</id>
+                            <goals>
+                                <goal>jar</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+
                 <!-- Install -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -421,20 +514,6 @@
                     <version>${maven-exec.version}</version>
                 </plugin>
 
-                <!-- Javadoc -->
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-javadoc-plugin</artifactId>
-                    <version>${maven-javadoc.version}</version>
-                    <configuration>
-                        <show>private</show>
-                        <nohelp>true</nohelp>
-                        <aggregate>true</aggregate>
-                        <reportOutputDirectory>${project.basedir}</reportOutputDirectory>
-                        <destDir>doc</destDir>
-                    </configuration>
-                </plugin>
-
                 <!-- Release -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -444,36 +523,76 @@
                         <autoVersionSubmodules>true</autoVersionSubmodules>
                     </configuration>
                 </plugin>
+                <plugin>
+                    <groupId>org.sonatype.plugins</groupId>
+                    <artifactId>nexus-staging-maven-plugin</artifactId>
+                    <version>1.6.7</version>
+                    <extensions>true</extensions>
+                    <configuration>
+                        <serverId>ossrh</serverId>
+                        <nexusUrl>https://oss.sonatype.org/</nexusUrl>
+                        <autoReleaseAfterClose>true</autoReleaseAfterClose>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-gpg-plugin</artifactId>
+                    <version>1.5</version>
+                    <executions>
+                        <execution>
+                            <id>sign-artifacts</id>
+                            <phase>verify</phase>
+                            <goals>
+                                <goal>sign</goal>
+                            </goals>
+                            <configuration>
+                                <!-- This is necessary for gpg to not try to use the pinentry programs -->
+                                <gpgArguments>
+                                    <arg>--pinentry-mode</arg>
+                                    <arg>loopback</arg>
+                                </gpgArguments>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>io.github.git-commit-id</groupId>
+                    <artifactId>git-commit-id-maven-plugin</artifactId>
+                    <version>${git-commit-id-maven-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>get-the-git-infos</id>
+                            <goals>
+                                <goal>revision</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                    <configuration>
+                        <dotGitDirectory>${project.basedir}/.git</dotGitDirectory>
+                        <prefix>git</prefix>
+                        <verbose>false</verbose>
+                        <generateGitPropertiesFile>true</generateGitPropertiesFile>
+                        <generateGitPropertiesFilename>${project.build.outputDirectory}/git.properties
+                        </generateGitPropertiesFilename>
+                        <format>properties</format>
+                        <gitDescribe>
+                            <skip>false</skip>
+                            <always>false</always>
+                            <dirty>-dirty</dirty>
+                        </gitDescribe>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
 
         <plugins>
             <plugin>
-                <groupId>pl.project13.maven</groupId>
-                <artifactId>git-commit-id-plugin</artifactId>
-                <version>${git-commit-id.version}</version>
-                <executions>
-                    <execution>
-                        <id>get-the-git-infos</id>
-                        <goals>
-                            <goal>revision</goal>
-                        </goals>
-                    </execution>
-                </executions>
-                <configuration>
-                    <dotGitDirectory>${project.basedir}/.git</dotGitDirectory>
-                    <prefix>git</prefix>
-                    <verbose>false</verbose>
-                    <generateGitPropertiesFile>true</generateGitPropertiesFile>
-                    <generateGitPropertiesFilename>${project.build.outputDirectory}/git.properties
-                    </generateGitPropertiesFilename>
-                    <format>properties</format>
-                    <gitDescribe>
-                        <skip>false</skip>
-                        <always>false</always>
-                        <dirty>-dirty</dirty>
-                    </gitDescribe>
-                </configuration>
+                <groupId>org.sonatype.plugins</groupId>
+                <artifactId>nexus-staging-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
             </plugin>
         </plugins>
     </build>

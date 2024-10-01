@@ -266,10 +266,26 @@ public class ElasticsearchIndexer implements Indexer {
     }
 
     @Override
+    public <T extends Entity> T get(String indexName, String id, List<String> sourceExcludes) {
+        return get(indexName, id, id, sourceExcludes);
+    }
+
+    @Override
     public <T extends Entity> T get(String indexName, String id, String root) {
+        return get(indexName, id, root, List.of());
+    }
+
+
+    @Override
+    public <T extends Entity> T get(String indexName, String id, String root, List<String> sourceExcludes) {
         String type = null;
         try {
-            final GetRequest req = new GetRequest.Builder().index(indexName).id(id).routing(root).build();
+            final GetRequest req = new GetRequest.Builder()
+                    .index(indexName)
+                    .id(id)
+                    .routing(root)
+                    .sourceExcludes(sourceExcludes)
+                    .build();
             GetResponse<ObjectNode> resp = client.get(req, ObjectNode.class);
             if (resp.found()) {
                 Map<String, Object> sourceAsMap = MAPPER.readValue(MAPPER.writeValueAsString(resp.source()), new TypeReference<>() {});
@@ -281,7 +297,7 @@ public class ElasticsearchIndexer implements Indexer {
         } catch (IOException e) {
             LOGGER.error("Failed to get entity " + id + " in index " + indexName, e);
         } catch (ClassNotFoundException e) {
-            LOGGER.error("no entity for type " + type);
+            LOGGER.error("No entity for type " + type);
         }
         return null;
     }

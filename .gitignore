@@ -4,6 +4,9 @@ dependency-reduced-pom.xml
 .idea/
 *.iml
 dist/
+index/
+plugins/
+extensions/
 logs/
 /app
 pom.xml.versionsBackup
@@ -13,5 +16,5 @@ datashare-web/src/main/resources/secret.properties
 .project
 .settings
 .classpath
-datashare-cli/doc/
+doc/
 work

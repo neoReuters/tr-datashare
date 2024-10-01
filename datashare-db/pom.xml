@@ -5,7 +5,7 @@
     <parent>
         <artifactId>datashare</artifactId>
         <groupId>org.icij.datashare</groupId>
-        <version>15.1.9</version>
+        <version>18.2.1</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -13,8 +13,8 @@
     <packaging>jar</packaging>
 
     <properties>
-        <liquibase.version>3.8.9</liquibase.version>
-        <jooq.version>3.12.3</jooq.version>
+        <liquibase.version>4.27.0</liquibase.version>
+        <jooq.version>3.19.10</jooq.version>
     </properties>
 
     <dependencies>
@@ -29,7 +29,7 @@
         <dependency>
             <groupId>org.yaml</groupId>
             <artifactId>snakeyaml</artifactId>
-            <version>1.32</version>
+            <version>2.0</version>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
@@ -81,15 +81,9 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-core</artifactId>
-            <version>${logback.version}</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
             <groupId>org.icij.datashare</groupId>
             <artifactId>commons-test</artifactId>
-            <version>15.1.9</version>
+            <version>${project.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -175,7 +169,7 @@
                 <!--
                     shade is necessary here to avoid java.sql.SQLException: No suitable driver
                     https://stackoverflow.com/questions/12297376/no-suitable-driver-found-when-including-the-needed-drivers-with-maven-assembly-p
-                    because information about drivers are stored in /META-INF thus can be overriden between drivers (sqlite, postgresql)
+                    because information about drivers are stored in /META-INF thus can be overridden between drivers (sqlite, postgresql)
                 -->
                 <artifactId>maven-shade-plugin</artifactId>
                 <configuration>

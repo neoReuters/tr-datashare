@@ -48,9 +48,13 @@ public class Plugin extends Extension {
 
     @Override
     public void delete(Path pluginsDirectory) throws IOException {
-        Path pluginDirectory = pluginsDirectory.resolve(getBasePath());
-        logger.info("removing plugin base directory {}", pluginDirectory);
-        FileUtils.deleteDirectory(pluginDirectory.toFile());
+        Path pluginDirectory = this.getLocalPath(pluginsDirectory);
+        if (pluginDirectory != null && pluginDirectory.toFile().exists()) {
+            logger.info("removing plugin base directory {}", pluginDirectory);
+            FileUtils.deleteDirectory(pluginDirectory.toFile());
+        } else {
+            logger.info("could not remove plugin base directory {} jar: {}", id, pluginDirectory);
+        }
     }
 
     @Override
@@ -61,7 +65,10 @@ public class Plugin extends Extension {
         List<File> previousVersionInstalled = getPreviousVersionInstalled(candidateFiles, getBaseName(getUrlFileName()));
         if (previousVersionInstalled.size() > 0) {
             logger.info("removing previous versions {}", previousVersionInstalled);
-            for (File file : previousVersionInstalled) FileUtils.deleteDirectory(file); }
+            for (File file : previousVersionInstalled) {
+                FileUtils.deleteDirectory(file);
+            }
+        }
         logger.info("installing plugin from file {} into {}", pluginFile, pluginsDir);
 
         InputStream is = new BufferedInputStream(new FileInputStream(pluginFile));
@@ -91,7 +98,7 @@ public class Plugin extends Extension {
     }
 
     @Override
-    public Path getBasePath() {
+    public Path getCanonicalPath() {
         if (url.getHost().equals("github.com") || extensionFormat.matcher(getBaseName(getUrlFileName())).matches()) {
             if (versionBeginsWithV.matcher(version).matches()) {
                 return Paths.get(id + "-" + version.substring(1));

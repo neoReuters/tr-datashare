@@ -33,7 +33,7 @@ import org.icij.datashare.text.indexing.elasticsearch.SourceExtractor;
 import org.icij.datashare.user.User;
 import org.icij.datashare.utils.DocumentVerifier;
 import org.icij.datashare.utils.PayloadFormatter;
-import org.icij.extract.extractor.EmbeddedDocumentMemoryExtractor;
+import org.icij.extract.extractor.EmbeddedDocumentExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,7 +87,8 @@ public class DocumentResource {
         boolean isProjectGranted = ((DatashareUser) context.currentUser()).isGranted(project);
         boolean isDownloadAllowed = isAllowed(repository.getProject(project), context.request().clientAddress());
         if (isProjectGranted && isDownloadAllowed) {
-            Document document = routing == null ? indexer.get(project, id) : indexer.get(project, id, routing);
+            List<String> sourceExcludes = List.of("content", "content_translated");
+            Document document = indexer.get(project, id, routing == null ? id : routing, sourceExcludes);
             if(documentVerifier.isRootDocumentSizeAllowed(document)) {
                 return getPayload(document, project, inline, parseBoolean(filterMetadata));
             }
@@ -409,7 +410,7 @@ public class DocumentResource {
             Payload payload = new Payload(contentType, from);
             String fileName = doc.isRootDocument() ? doc.getName(): doc.getId().substring(0, 10) + "." + FileExtension.get(contentType);
             return inline ? payload: payload.withHeader("Content-Disposition", "attachment;filename=\"" + fileName + "\"");
-        } catch (FileNotFoundException | EmbeddedDocumentMemoryExtractor.ContentNotFoundException fnf) {
+        } catch (FileNotFoundException | EmbeddedDocumentExtractor.ContentNotFoundException fnf) {
             logger.error("unable to read document source file", fnf);
             return Payload.notFound();
         }
