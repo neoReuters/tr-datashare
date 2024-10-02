@@ -17,7 +17,7 @@ jobs:
       - name: Checkout frontend repository
         uses: actions/checkout@v4
         with:
-          repository: 'neoreuters/tr-datashare-client'
+          repository: 'icij/datashare-client'
           ref: 'main'
 
       - name: Setup Node
@@ -26,7 +26,7 @@ jobs:
           node-version: '18'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build frontend for distribution
         run: npm run build
@@ -43,7 +43,7 @@ jobs:
       postgres:
         image: postgres:latest
         env:
-          POSTGRES_DB: datashare
+          POSTGRES_DB: datashare_liquibase
           POSTGRES_USER: dstest
           POSTGRES_PASSWORD: test
         ports:
@@ -70,7 +70,7 @@ jobs:
       - name: Extract version from pom.xml
         id: get_version
         run: |
-          VERSION=$(cat pom.xml | grep '<version>[0-9.]\+' | sed 's/<version>\([0-9.]\+\)<\/version>/\1/g' | tr -d '[:space:]')
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           echo "::set-output name=VERSION::$VERSION"
 
       - name: Print version
@@ -78,19 +78,19 @@ jobs:
 
       - name: Wait for PostgreSQL to be ready
         run: |
-          until PGPASSWORD=test psql -h localhost -U dstest -d datashare -c '\q'; do
+          until PGPASSWORD=test psql -h localhost -U dstest -d datashare_liquibase -c '\q'; do
             >&2 echo "Postgres is still unavailable - sleeping"
             sleep 1
           done
           >&2 echo "Postgres is up - executing command"
 
       - name: Run init script on PostgreSQL
-        run: PGPASSWORD=test psql -h localhost -U dstest -d datashare -a -f ./datashare-db/scr/init.sql
+        run: PGPASSWORD=test psql -h localhost -U dstest -d datashare_liquibase -a -f ./datashare-db/scr/init.sql
 
-      - name: Set up JDK 11
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'adopt'
 
       - name: Set up Maven
@@ -98,11 +98,17 @@ jobs:
         with:
           maven-version: 3.6.3
 
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
       - name: Validate project
         run: mvn validate
 
       - name: Install commons-test
-        run: mvn -pl commons-test -am install
+        run: mvn -pl commons-test -am install -DskipTests
 
       - name: Update database
         run: mvn -pl datashare-db liquibase:update
